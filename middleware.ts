@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const allowedOrigins = [
-  "http://localhost:8081", // Expo dev
+  "https://psychic-dollop-97qjjq9wrrqx394x9-8081.app.github.dev", // Expo dev
   "https://lumticket.vercel.app", // Production
   "https://api-phi-dun-27.vercel.app",
 ];
