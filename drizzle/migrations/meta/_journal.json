@@ -15,6 +15,13 @@
       "when": 1787962187285,
       "tag": "0001_lyrical_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787965912266,
+      "tag": "0002_strong_pestilence",
+      "breakpoints": true
     }
   ]
 }
