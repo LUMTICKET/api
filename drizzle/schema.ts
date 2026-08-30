@@ -173,7 +173,10 @@ export const events = pgTable("events", {
     .references(() => payments.id, { onDelete: "restrict" }),
   title: varchar("title", { length: 255 }).notNull(),
   subtitle: varchar("subtitle", { length: 500 }),
-  category: varchar("category", { length: 30 }).notNull().default("event"),
+  category: varchar("category", { length: 30 })
+    .notNull()
+    .default("event")
+    .$type<"event" | "bus" | "flight" | "tourism">(),
   organizer: varchar("organizer", { length: 255 }),
   description: text("description"),
   location: varchar("location", { length: 255 }).notNull(),

@@ -13,6 +13,8 @@ interface TicketInput {
   capacity?: number;
 }
 
+const categories = ["event", "bus", "flight", "tourism"] as const;
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser(req);
@@ -31,6 +33,9 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!tickets?.length) return NextResponse.json({ error: "At least one ticket type is required" }, { status: 400 });
+    if (!categories.includes(body.category ?? "event")) {
+      return NextResponse.json({ error: "category must be event, bus, flight, or tourism" }, { status: 400 });
+    }
 
     const [profile] = await db
       .select({ id: businessProfiles.id })

@@ -170,7 +170,7 @@ Supported methods are `card`, `tnm`, and `airtel`. Save the returned payment `id
 
 ### Create an event and ticket types
 
-`POST /api/events` requires the business profile owner and a successful `paymentId`. The API accepts `tickets`; the Expo form uses `tiers`, which must be mapped before sending.
+`POST /api/events` requires the business profile owner and a successful `paymentId`. Supported categories are `event`, `bus`, `flight`, and `tourism`. The API accepts `tickets`; the Expo form uses `tiers`, which must be mapped before sending.
 
 ```bash
 curl -X POST http://localhost:3000/api/events \
@@ -196,6 +196,29 @@ curl -X POST http://localhost:3000/api/events \
 ```
 
 The API creates the event and all ticket types in one transaction. Each ticket type starts with `remaining` equal to `capacity`. The event creator, business profile, and payment are linked in the database, and event creation is added to the audit log.
+
+### Read and edit an event
+
+`GET /api/events/:id` returns an event and its ticket types. `PUT /api/events/:id` allows the business owner or an accepted team member with the `admin` role to edit the event. Send only the fields that should change. Include `tickets` or `tiers` when replacing all ticket types; omitted ticket arrays leave existing ticket types unchanged.
+
+```bash
+curl -X PUT http://localhost:3000/api/events/1 \
+  -H 'Authorization: Bearer <owner-or-admin-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "category":"bus",
+    "title":"Blantyre to Mzuzu Express",
+    "location":"Blantyre Bus Terminal",
+    "startsAt":"2026-09-25T06:00:00.000Z",
+    "tickets":[
+      {"name":"Standard Seat","price":15000,"currency":"MWK","capacity":40,"perks":["Luggage"]}
+    ]
+  }'
+```
+
+Ticket types are normalized under the event and can represent tickets for all four categories. For bus and flight products, use ticket names such as `Standard Seat` or `Economy`; for tourism, use names such as `Day Pass`; for events, use names such as `General Admission` or `VIP`.
+
+The update is transactional: event changes and ticket replacement either both succeed or neither is committed. Every update is written to the audit log with the acting user's ID. A team member must be accepted into the business and have `role: "admin"`; an invitation alone does not grant edit access.
 
 ### List events and payments
 
