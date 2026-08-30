@@ -1,6 +1,28 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let transport: nodemailer.Transporter | null = null;
+
+function getTransport() {
+  if (transport) return transport;
+
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const password = process.env.SMTP_PASSWORD;
+
+  if (!host || !user || !password) {
+    throw new Error("SMTP_HOST, SMTP_USER and SMTP_PASSWORD must be configured");
+  }
+
+  const port = Number(process.env.SMTP_PORT || 587);
+  transport = nodemailer.createTransport({
+    host,
+    port,
+    secure: process.env.SMTP_SECURE === "true" || port === 465,
+    auth: { user, pass: password },
+  });
+
+  return transport;
+}
 
 interface InvitationEmailParams {
   to: string;
@@ -19,13 +41,8 @@ export async function sendInvitationEmail({
   acceptLink,
   role,
 }: InvitationEmailParams) {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn("RESEND_API_KEY not set — skipping email");
-    return;
-  }
-
   try {
-    const { data, error } = await resend.emails.send({
+    const result = await getTransport().sendMail({
       from: process.env.FROM_EMAIL || "Team <team@yourdomain.com>",
       to,
       subject: `${inviterName} invited you to join ${businessName} on Lum`,
@@ -49,6 +66,7 @@ export async function sendInvitationEmail({
                           You've been invited
                         </h1>
                         <p style="color:#a3a3a3;font-size:15px;margin:0 0 24px;line-height:1.6;">
+                          Hi <strong style="color:#fafafa;">${name}</strong>,<br />
                           <strong style="color:#fafafa;">${inviterName}</strong> invited you to join 
                           <strong style="color:#fafafa;">${businessName}</strong> as a 
                           <strong style="color:#f59e0b;">${role}</strong>.
@@ -86,8 +104,7 @@ export async function sendInvitationEmail({
       `,
     });
 
-    if (error) throw error;
-    return data;
+    return result;
   } catch (err) {
     console.error("Failed to send invitation email:", err);
     throw err;

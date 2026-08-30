@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { verifyToken } from "./auth"; // your existing jwt helper
+import { validateSessionToken } from "./auth";
 import { db } from "./db";
 import { users } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -10,7 +10,9 @@ export async function getCurrentUser(req: NextRequest) {
   if (!token) return null;
 
   try {
-    const decoded = verifyToken(token);
+    const decoded = await validateSessionToken(token);
+    if (!decoded) return null;
+
     const [user] = await db
       .select()
       .from(users)

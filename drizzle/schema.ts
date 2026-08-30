@@ -22,6 +22,21 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const sessions = pgTable("sessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  email: varchar("email", { length: 255 }).notNull(),
+  sessionId: varchar("session_id", { length: 255 }).notNull().unique(),
+  refreshTokenHash: varchar("refresh_token_hash", { length: 255 }).notNull(),
+  userAgent: varchar("user_agent", { length: 255 }),
+  ipAddress: varchar("ip_address", { length: 255 }),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+  refreshExpiresAt: timestamp("refresh_expires_at", { mode: "date" }).notNull(),
+  revokedAt: timestamp("revoked_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 /* ── KYB / business profile table ── */
 export const businessProfiles = pgTable("business_profiles", {
   id: serial("id").primaryKey(),
@@ -49,6 +64,19 @@ export const businessProfiles = pgTable("business_profiles", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const teamRoles = pgTable("team_roles", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  permissions: jsonb("permissions").$type<string[]>().default([]),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 /* ── NEW: Team invitations table ── */
 export const teamInvitations = pgTable("team_invitations", {
   id: serial("id").primaryKey(),
@@ -58,6 +86,7 @@ export const teamInvitations = pgTable("team_invitations", {
   email: varchar("email", { length: 255 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   role: varchar("role", { length: 50 }).notNull().$type<"admin" | "operator" | "viewer">(),
+  roleId: integer("role_id").references(() => teamRoles.id, { onDelete: "set null" }),
   token: varchar("token", { length: 255 }).notNull().unique(),
   status: varchar("status", { length: 20 })
     .notNull()
@@ -66,6 +95,7 @@ export const teamInvitations = pgTable("team_invitations", {
   invitedBy: integer("invited_by")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
   expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
   acceptedAt: timestamp("accepted_at", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
@@ -82,6 +112,7 @@ export const teamMembers = pgTable("team_members", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   role: varchar("role", { length: 50 }).notNull().$type<"admin" | "operator" | "viewer">(),
+  roleId: integer("role_id").references(() => teamRoles.id, { onDelete: "set null" }),
   invitationId: integer("invitation_id")
     .notNull()
     .references(() => teamInvitations.id, { onDelete: "cascade" })
@@ -89,6 +120,20 @@ export const teamMembers = pgTable("team_members", {
   joinedAt: timestamp("joined_at", { mode: "date" }).defaultNow().notNull(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  actorUserId: integer("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  targetUserId: integer("target_user_id").references(() => users.id, { onDelete: "set null" }),
+  businessProfileId: integer("business_profile_id").references(() => businessProfiles.id, { onDelete: "cascade" }),
+  teamRoleId: integer("team_role_id").references(() => teamRoles.id, { onDelete: "set null" }),
+  teamInvitationId: integer("team_invitation_id").references(() => teamInvitations.id, { onDelete: "set null" }),
+  action: varchar("action", { length: 80 }).notNull(),
+  resourceType: varchar("resource_type", { length: 50 }).notNull(),
+  resourceId: integer("resource_id"),
+  details: jsonb("details").default({}),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
 /* ── Relations ── */
@@ -101,6 +146,22 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   sentInvitations: many(teamInvitations, {
     relationName: "sentInvitations",
   }),
+  rolesCreated: many(teamRoles),
+  auditLogs: many(auditLogs),
+}));
+
+export const teamRolesRelations = relations(teamRoles, ({ one, many }) => ({
+  businessProfile: one(businessProfiles, {
+    fields: [teamRoles.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+  createdByUser: one(users, {
+    fields: [teamRoles.createdBy],
+    references: [users.id],
+  }),
+  invitations: many(teamInvitations),
+  members: many(teamMembers),
+  auditLogs: many(auditLogs),
 }));
 
 export const businessProfilesRelations = relations(businessProfiles, ({ one, many }) => ({
@@ -122,6 +183,14 @@ export const teamInvitationsRelations = relations(teamInvitations, ({ one }) => 
     references: [users.id],
     relationName: "sentInvitations",
   }),
+  createdByUser: one(users, {
+    fields: [teamInvitations.createdBy],
+    references: [users.id],
+  }),
+  role: one(teamRoles, {
+    fields: [teamInvitations.roleId],
+    references: [teamRoles.id],
+  }),
   acceptedBy: one(teamMembers, {
     fields: [teamInvitations.id],
     references: [teamMembers.invitationId],
@@ -137,8 +206,35 @@ export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
     fields: [teamMembers.userId],
     references: [users.id],
   }),
+  role: one(teamRoles, {
+    fields: [teamMembers.roleId],
+    references: [teamRoles.id],
+  }),
   invitation: one(teamInvitations, {
     fields: [teamMembers.invitationId],
+    references: [teamInvitations.id],
+  }),
+}));
+
+export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
+  actor: one(users, {
+    fields: [auditLogs.actorUserId],
+    references: [users.id],
+  }),
+  targetUser: one(users, {
+    fields: [auditLogs.targetUserId],
+    references: [users.id],
+  }),
+  businessProfile: one(businessProfiles, {
+    fields: [auditLogs.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+  teamRole: one(teamRoles, {
+    fields: [auditLogs.teamRoleId],
+    references: [teamRoles.id],
+  }),
+  invitation: one(teamInvitations, {
+    fields: [auditLogs.teamInvitationId],
     references: [teamInvitations.id],
   }),
 }));
@@ -146,8 +242,14 @@ export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
 /* ── Types ── */
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type NewBusinessProfile = typeof businessProfiles.$inferInsert;
+export type TeamRoleRecord = typeof teamRoles.$inferSelect;
+export type NewTeamRoleRecord = typeof teamRoles.$inferInsert;
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type NewAuditLog = typeof auditLogs.$inferInsert;
 export type TeamInvitation = typeof teamInvitations.$inferSelect;
 export type NewTeamInvitation = typeof teamInvitations.$inferInsert;
 export type TeamMember = typeof teamMembers.$inferSelect;

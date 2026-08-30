@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserByEmail, comparePassword, signToken } from "@/lib/auth";
+import { createSession } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,10 +29,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const token = signToken({ userId: user.id, email: user.email });
+    const session = await createSession(user.id, user.email, {
+      userAgent: req.headers.get("user-agent"),
+      ipAddress: req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip"),
+    });
+    const token = signToken({
+      userId: user.id,
+      email: user.email,
+      sessionId: session.sessionId,
+    });
 
     return NextResponse.json({
       token,
+      refreshToken: session.refreshToken,
+      sessionId: session.sessionId,
+      expiresAt: session.expiresAt,
+      refreshExpiresAt: session.refreshExpiresAt,
       user: {
         id: user.id,
         email: user.email,

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserById, validateSessionToken } from "@/lib/auth";
+import { validateSessionToken } from "@/lib/auth";
+import { revokeSession } from "@/lib/session";
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
     const token = authHeader?.replace("Bearer ", "");
@@ -11,22 +12,13 @@ export async function GET(req: NextRequest) {
     }
 
     const decoded = await validateSessionToken(token);
-    if (!decoded) {
+    if (!decoded || !decoded.sessionId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await getUserById(decoded.userId);
+    await revokeSession(decoded.sessionId);
 
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    return NextResponse.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      avatar: user.avatar,
-    });
+    return NextResponse.json({ success: true, message: "Logged out" });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
