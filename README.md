@@ -146,6 +146,112 @@ curl -X PUT http://localhost:3000/api/kyb/<business-profile-id> \
   -d '{"description":"Updated business description"}'
 ```
 
+## Payments and events
+
+Event publishing requires a successful payment belonging to the same authenticated user and business profile. The current payment provider is intentionally a simulation so the Expo flow can be integrated before a mobile-money or card provider is connected.
+
+### Simulate the event publishing payment
+
+`POST /api/payments/simulate` creates a successful payment record. Amounts are integer minor units; for MWK, send the amount as whole kwacha.
+
+```bash
+curl -X POST http://localhost:3000/api/payments/simulate \
+  -H 'Authorization: Bearer <owner-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "businessProfileId": 1,
+    "amount": 10000,
+    "currency":"MWK",
+    "method":"tnm"
+  }'
+```
+
+Supported methods are `card`, `tnm`, and `airtel`. Save the returned payment `id` as `paymentId`.
+
+### Create an event and ticket types
+
+`POST /api/events` requires the business profile owner and a successful `paymentId`. The API accepts `tickets`; the Expo form uses `tiers`, which must be mapped before sending.
+
+```bash
+curl -X POST http://localhost:3000/api/events \
+  -H 'Authorization: Bearer <owner-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "businessProfileId": 1,
+    "paymentId": 1,
+    "title":"Lilongwe Food Fest",
+    "subtitle":"Food, music, and local makers",
+    "category":"event",
+    "organizer":"Lum Events",
+    "description":"An open-air food festival.",
+    "location":"Lilongwe Civic Centre",
+    "startsAt":"2026-09-20T14:00:00.000Z",
+    "maxPerUser":5,
+    "tags":["food","music"],
+    "tickets":[
+      {"name":"General Admission","price":25000,"currency":"MWK","capacity":500,"perks":["Entry"]},
+      {"name":"VIP","price":75000,"currency":"MWK","capacity":50,"perks":["Priority entry","Reserved seating"]}
+    ]
+  }'
+```
+
+The API creates the event and all ticket types in one transaction. Each ticket type starts with `remaining` equal to `capacity`. The event creator, business profile, and payment are linked in the database, and event creation is added to the audit log.
+
+### List events and payments
+
+```bash
+curl 'http://localhost:3000/api/events?businessProfileId=1' \
+  -H 'Authorization: Bearer <owner-token>'
+
+curl 'http://localhost:3000/api/payments/simulate?businessProfileId=1' \
+  -H 'Authorization: Bearer <owner-token>'
+```
+
+### Expo integration sequence
+
+After the owner submits the create form:
+
+1. Call `POST /api/payments/simulate` with the selected payment method and platform fee.
+2. Read the returned payment `id`.
+3. Call `POST /api/events` with that `paymentId` and map each Expo tier to a ticket: `name`, numeric `price`, `currency`, `perks` array, and numeric `capacity` from `remaining`.
+4. Show the success screen only after the event request returns `201`.
+
+Example client helper:
+
+```ts
+const API_URL = "http://localhost:3000";
+
+async function publishEvent(token: string, businessProfileId: number, payload: any, method: "card" | "tnm" | "airtel") {
+  const paymentResponse = await fetch(`${API_URL}/api/payments/simulate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ businessProfileId, amount: 10000, currency: "MWK", method }),
+  });
+  if (!paymentResponse.ok) throw new Error("Payment simulation failed");
+  const payment = await paymentResponse.json();
+
+  const eventResponse = await fetch(`${API_URL}/api/events`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...payload,
+      businessProfileId,
+      paymentId: payment.id,
+      startsAt: payload.date,
+      tickets: payload.tiers.map((tier: { name: string; price: string; currency?: string; perks: string; remaining: string }) => ({
+        name: tier.name,
+        price: Number(tier.price),
+        currency: tier.currency || "MWK",
+        perks: tier.perks.split(",").map((perk) => perk.trim()).filter(Boolean),
+        capacity: Number(tier.remaining),
+      })),
+    }),
+  });
+  if (!eventResponse.ok) throw new Error("Event creation failed");
+  return eventResponse.json();
+}
+```
+
 ## Team roles
 
 Only the business profile owner can create or list roles.

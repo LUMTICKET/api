@@ -136,6 +136,72 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+export const payments = pgTable("payments", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider", { length: 50 }).notNull().default("simulation"),
+  method: varchar("method", { length: 30 }).notNull().$type<"card" | "tnm" | "airtel">(),
+  amount: integer("amount").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("pending")
+    .$type<"pending" | "succeeded" | "failed">(),
+  reference: varchar("reference", { length: 100 }).notNull().unique(),
+  metadata: jsonb("metadata").default({}),
+  paidAt: timestamp("paid_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const events = pgTable("events", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  createdBy: integer("created_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "restrict" }),
+  paymentId: integer("payment_id")
+    .notNull()
+    .unique()
+    .references(() => payments.id, { onDelete: "restrict" }),
+  title: varchar("title", { length: 255 }).notNull(),
+  subtitle: varchar("subtitle", { length: 500 }),
+  category: varchar("category", { length: 30 }).notNull().default("event"),
+  organizer: varchar("organizer", { length: 255 }),
+  description: text("description"),
+  location: varchar("location", { length: 255 }).notNull(),
+  startsAt: timestamp("starts_at", { mode: "date" }).notNull(),
+  endsAt: timestamp("ends_at", { mode: "date" }),
+  image: text("image"),
+  tags: jsonb("tags").$type<string[]>().default([]),
+  maxPerUser: integer("max_per_user").notNull().default(5),
+  status: varchar("status", { length: 20 }).notNull().default("published").$type<"draft" | "published" | "cancelled">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const ticketTypes = pgTable("ticket_types", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  price: integer("price").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  perks: jsonb("perks").$type<string[]>().default([]),
+  capacity: integer("capacity").notNull(),
+  remaining: integer("remaining").notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 /* ── Relations ── */
 export const usersRelations = relations(users, ({ one, many }) => ({
   businessProfile: one(businessProfiles, {
@@ -148,6 +214,8 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   rolesCreated: many(teamRoles),
   auditLogs: many(auditLogs),
+  payments: many(payments),
+  eventsCreated: many(events),
 }));
 
 export const teamRolesRelations = relations(teamRoles, ({ one, many }) => ({
@@ -171,6 +239,30 @@ export const businessProfilesRelations = relations(businessProfiles, ({ one, man
   }),
   teamMembers: many(teamMembers),
   invitations: many(teamInvitations),
+  payments: many(payments),
+  events: many(events),
+}));
+
+export const paymentsRelations = relations(payments, ({ one }) => ({
+  businessProfile: one(businessProfiles, {
+    fields: [payments.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+  user: one(users, { fields: [payments.userId], references: [users.id] }),
+}));
+
+export const eventsRelations = relations(events, ({ one, many }) => ({
+  businessProfile: one(businessProfiles, {
+    fields: [events.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+  creator: one(users, { fields: [events.createdBy], references: [users.id] }),
+  payment: one(payments, { fields: [events.paymentId], references: [payments.id] }),
+  ticketTypes: many(ticketTypes),
+}));
+
+export const ticketTypesRelations = relations(ticketTypes, ({ one }) => ({
+  event: one(events, { fields: [ticketTypes.eventId], references: [events.id] }),
 }));
 
 export const teamInvitationsRelations = relations(teamInvitations, ({ one }) => ({
@@ -254,6 +346,12 @@ export type TeamInvitation = typeof teamInvitations.$inferSelect;
 export type NewTeamInvitation = typeof teamInvitations.$inferInsert;
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type NewTeamMember = typeof teamMembers.$inferInsert;
+export type Payment = typeof payments.$inferSelect;
+export type NewPayment = typeof payments.$inferInsert;
+export type Event = typeof events.$inferSelect;
+export type NewEvent = typeof events.$inferInsert;
+export type TicketType = typeof ticketTypes.$inferSelect;
+export type NewTicketType = typeof ticketTypes.$inferInsert;
 
 export interface Executive {
   id: string;
