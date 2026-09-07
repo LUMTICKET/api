@@ -43,13 +43,15 @@ npx drizzle-kit push
 
 ### Sign up
 
-`POST /api/auth/signup` creates a user and a database-backed session.
+`POST /api/auth/signup` creates a user and a database-backed session. The signup form accepts a full name, country, email or mobile identifier, and password. The identifier is stored in the user's existing `email` field.
 
 ```bash
 curl -X POST http://localhost:3000/api/auth/signup \
   -H 'Content-Type: application/json' \
-  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner"}'
+  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW"}'
 ```
+
+Supported signup country codes are `MW` (Malawi), `ZM` (Zambia), `ZW` (Zimbabwe), `MZ` (Mozambique), `TZ` (Tanzania), `ZA` (South Africa), `BW` (Botswana), and `NA` (Namibia). The `country` field is optional for existing clients and is persisted on the user record when supplied.
 
 The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, and `refreshExpiresAt`. Keep the access token and refresh token secure.
 

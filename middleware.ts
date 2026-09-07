@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const allowedOrigins = [
-  "https://psychic-dollop-97qjjq9wrrqx394x9-8081.app.github.dev",
+  "https://solid-robot-vpqr5rx5wvx42xp7j-3000.app.github.dev",
   "https://lumticket.vercel.app",
   "https://api-phi-dun-27.vercel.app",
   "http://localhost:8081",

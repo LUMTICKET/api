@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password, name } = await req.json();
+    const { email, password, name, country } = await req.json();
 
     if (!email || !password) {
       return NextResponse.json(
@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
         email,
         password: hashed,
         name: name || null,
+        country: country || null,
       })
       .returning();
 
