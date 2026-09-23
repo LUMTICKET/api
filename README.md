@@ -17,12 +17,14 @@ npm install
 npm run dev
 ```
 
-The API runs at `http://localhost:3000` by default. Set `APP_URL` to the public API or web URL used in invitation links when deploying.
+The deployed API base URL is `https://api-gamma-mocha-qn31xem8po.vercel.app`.
+
+For local development, the API still runs at `http://localhost:3000` by default. Set `APP_URL` to the public API or web URL used in invitation links when deploying.
 
 ```env
 DATABASE_URL="postgresql://user:password@host:5432/database?sslmode=require"
 JWT_SECRET="replace-with-a-long-random-secret"
-APP_URL="http://localhost:3000"
+APP_URL="https://api-gamma-mocha-qn31xem8po.vercel.app"
 
 # Gmail SMTP example. Use a Google App Password, not your normal password.
 SMTP_HOST=smtp.gmail.com
@@ -46,7 +48,7 @@ npx drizzle-kit push
 `POST /api/auth/signup` creates a user and a database-backed session. The signup form accepts a full name, country, email or mobile identifier, and password. The identifier is stored in the user's existing `email` field.
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/signup \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
   -H 'Content-Type: application/json' \
   -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW"}'
 ```
@@ -60,7 +62,7 @@ The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, and `re
 `POST /api/auth/login` accepts the same email and password and returns a new session.
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/login \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"owner@example.com","password":"Password123!"}'
 ```
@@ -76,7 +78,7 @@ Authorization: Bearer <token>
 `GET /api/auth/me` returns the authenticated user.
 
 ```bash
-curl http://localhost:3000/api/auth/me \
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/me \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -85,7 +87,7 @@ curl http://localhost:3000/api/auth/me \
 `POST /api/auth/refresh` rotates the refresh token and returns a new access token. Replace the stored refresh token with the returned one.
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/refresh \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refreshToken":"<refresh-token>"}'
 ```
@@ -97,7 +99,7 @@ Sessions expire after 24 hours. Refresh tokens are rotated and have their own ex
 `POST /api/auth/logout` revokes the current database session.
 
 ```bash
-curl -X POST http://localhost:3000/api/auth/logout \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/logout \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -110,7 +112,7 @@ All KYB endpoints require authentication and are restricted to the current user'
 `POST /api/kyb` requires `businessName`, `email`, `phone`, `address`, `city`, and `country`.
 
 ```bash
-curl -X POST http://localhost:3000/api/kyb \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -133,7 +135,7 @@ The response contains the profile `id`. Save it as `businessProfileId` for team 
 `GET /api/kyb` returns the authenticated user's profile.
 
 ```bash
-curl http://localhost:3000/api/kyb \
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -142,7 +144,7 @@ curl http://localhost:3000/api/kyb \
 Use `GET`, `PUT`, or `DELETE /api/kyb/:id`. `PUT` accepts any profile fields and keeps omitted fields unchanged.
 
 ```bash
-curl -X PUT http://localhost:3000/api/kyb/<business-profile-id> \
+curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb/<business-profile-id> \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"description":"Updated business description"}'
@@ -157,7 +159,7 @@ Event publishing requires a successful payment belonging to the same authenticat
 `POST /api/payments/simulate` creates a successful payment record. Amounts are integer minor units; for MWK, send the amount as whole kwacha.
 
 ```bash
-curl -X POST http://localhost:3000/api/payments/simulate \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/payments/simulate \
   -H 'Authorization: Bearer <owner-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -175,7 +177,7 @@ Supported methods are `card`, `tnm`, and `airtel`. Save the returned payment `id
 `POST /api/events` requires the business profile owner and a successful `paymentId`. Supported categories are `event`, `bus`, `flight`, and `tourism`. The API accepts `tickets`; the Expo form uses `tiers`, which must be mapped before sending.
 
 ```bash
-curl -X POST http://localhost:3000/api/events \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/events \
   -H 'Authorization: Bearer <owner-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -204,7 +206,7 @@ The API creates the event and all ticket types in one transaction. Each ticket t
 `GET /api/events/:id` returns an event and its ticket types. `PUT /api/events/:id` allows the business owner or an accepted team member with the `admin` role to edit the event. Send only the fields that should change. Include `tickets` or `tiers` when replacing all ticket types; omitted ticket arrays leave existing ticket types unchanged.
 
 ```bash
-curl -X PUT http://localhost:3000/api/events/1 \
+curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/events/1 \
   -H 'Authorization: Bearer <owner-or-admin-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -225,10 +227,10 @@ The update is transactional: event changes and ticket replacement either both su
 ### List events and payments
 
 ```bash
-curl 'http://localhost:3000/api/events?businessProfileId=1' \
+curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/events?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 
-curl 'http://localhost:3000/api/payments/simulate?businessProfileId=1' \
+curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/payments/simulate?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
@@ -244,7 +246,7 @@ After the owner submits the create form:
 Example client helper:
 
 ```ts
-const API_URL = "http://localhost:3000";
+const API_URL = "https://api-gamma-mocha-qn31xem8po.vercel.app";
 
 async function publishEvent(token: string, businessProfileId: number, payload: any, method: "card" | "tnm" | "airtel") {
   const paymentResponse = await fetch(`${API_URL}/api/payments/simulate`, {
@@ -286,7 +288,7 @@ Only the business profile owner can create or list roles.
 `POST /api/team/roles`:
 
 ```bash
-curl -X POST http://localhost:3000/api/team/roles \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/roles \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -304,7 +306,7 @@ The response contains the role `id`, which can be supplied as `roleId` when crea
 `GET /api/team/roles?businessProfileId=<id>` returns roles for the owned business profile.
 
 ```bash
-curl 'http://localhost:3000/api/team/roles?businessProfileId=1' \
+curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/roles?businessProfileId=1' \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -315,7 +317,7 @@ curl 'http://localhost:3000/api/team/roles?businessProfileId=1' \
 `POST /api/team/invitations` creates a pending invitation and sends an email through the configured SMTP account. The owner must provide `businessProfileId`, `email`, and `name`. `roleId` is optional; `role` can be used as a fallback role name. Invitations expire after seven days by default.
 
 ```bash
-curl -X POST http://localhost:3000/api/team/invitations \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations \
   -H 'Authorization: Bearer <owner-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -334,7 +336,7 @@ The invitation is stored in the database before email delivery and the action is
 `GET /api/team/invitations?businessProfileId=<id>` lists invitations for the owned profile.
 
 ```bash
-curl 'http://localhost:3000/api/team/invitations?businessProfileId=1' \
+curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
@@ -343,7 +345,7 @@ curl 'http://localhost:3000/api/team/invitations?businessProfileId=1' \
 `GET /api/team/invitations/:token` is public and validates that the invitation exists, is pending, and has not expired.
 
 ```bash
-curl http://localhost:3000/api/team/invitations/<invitation-token>
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token>
 ```
 
 ### Accept an invitation
@@ -351,7 +353,7 @@ curl http://localhost:3000/api/team/invitations/<invitation-token>
 The invited person must first sign up or log in, then call `POST /api/team/invitations/:token` with their access token. This creates a `teamMembers` record, marks the invitation as accepted, and creates an audit event.
 
 ```bash
-curl -X POST http://localhost:3000/api/team/invitations/<invitation-token> \
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token> \
   -H 'Authorization: Bearer <invited-user-token>'
 ```
 
@@ -362,7 +364,7 @@ An expired invitation returns `410`. A user who already belongs to a team return
 `GET /api/audit?businessProfileId=<id>` returns audit events for an owned business profile in creation order.
 
 ```bash
-curl 'http://localhost:3000/api/audit?businessProfileId=1' \
+curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/audit?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
