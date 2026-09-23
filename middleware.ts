@@ -7,7 +7,7 @@ const allowedOrigins = [
   "http://localhost:8081",
   "http://localhost:19006",
   "https://lumiticketui.vercel.app",
-  "https://lumiticket-v.vercel.app"
+  "https://luticketnewui.vercel.app"
 ];
 
 export function middleware(req: NextRequest) {
