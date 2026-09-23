@@ -62,8 +62,8 @@ export async function POST(req: NextRequest) {
         expiresAt,
       })
       .returning();
-
-    const acceptLink = `${process.env.APP_URL ?? "http://localhost:3000"}/accept-invitation?token=${token}`;
+    const baseUrl = "https://luticketnewui.vercel.app";
+    const acceptLink = `${baseUrl}/accept-invitation?token=${token}`;
 
     await sendInvitationEmail({
       to: email,
