@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserById, validateSessionToken } from "@/lib/auth";
+import {
+  getBusinessTypeForUser,
+  serializeBusinessType,
+} from "@/lib/business-types";
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,11 +25,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    const businessType = await getBusinessTypeForUser(user.id);
+
     return NextResponse.json({
       id: user.id,
       email: user.email,
       name: user.name,
       avatar: user.avatar,
+      businessType: serializeBusinessType(businessType),
     });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

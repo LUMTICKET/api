@@ -10,6 +10,17 @@ import {
   jsonb,
 } from "drizzle-orm/pg-core";
 
+/* ── Business types (reference/lookup table, seeded by default) ── */
+export const businessTypes = pgTable("business_types", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 100 }).notNull().unique(),
+  slug: varchar("slug", { length: 100 }).notNull().unique(),
+  description: text("description"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 /* ── existing users table ── */
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -17,6 +28,9 @@ export const users = pgTable("users", {
   password: text("password"),
   name: varchar("name", { length: 255 }),
   country: varchar("country", { length: 2 }),
+  businessTypeId: integer("business_type_id").references(() => businessTypes.id, {
+    onDelete: "set null",
+  }),
   avatar: text("avatar"),
   googleId: varchar("google_id", { length: 255 }).unique(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
@@ -212,6 +226,10 @@ export const usersRelations = relations(users, ({ one, many }) => ({
     fields: [users.id],
     references: [businessProfiles.userId],
   }),
+  businessType: one(businessTypes, {
+    fields: [users.businessTypeId],
+    references: [businessTypes.id],
+  }),
   teamMemberships: many(teamMembers),
   sentInvitations: many(teamInvitations, {
     relationName: "sentInvitations",
@@ -220,6 +238,10 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   auditLogs: many(auditLogs),
   payments: many(payments),
   eventsCreated: many(events),
+}));
+
+export const businessTypesRelations = relations(businessTypes, ({ many }) => ({
+  users: many(users),
 }));
 
 export const teamRolesRelations = relations(teamRoles, ({ one, many }) => ({
@@ -336,6 +358,8 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
 }));
 
 /* ── Types ── */
+export type BusinessType = typeof businessTypes.$inferSelect;
+export type NewBusinessType = typeof businessTypes.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;

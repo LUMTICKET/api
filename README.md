@@ -43,29 +43,72 @@ npx drizzle-kit push
 
 ## Authentication
 
+### Business types
+
+`GET /api/business-types` is a public endpoint that lists the business types available for selection during signup and first-time Google sign-in. The `business_types` table is seeded by default with Event Organizer, Bus Operator, Airline / Flight Operator, and Tourism / Tour Operator.
+
+```bash
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/business-types
+```
+
+Response shape:
+
+```json
+{
+  "businessTypes": [
+    { "id": 1, "name": "Event Organizer", "slug": "event-organizer", "description": "Concerts, festivals, sports, and other live events" }
+  ]
+}
+```
+
+`businessType` values are accepted as an id (`1`), a slug (`"event-organizer"`), or a name (`"Event Organizer"`). Pass `?includeInactive=1` to include disabled types.
+
 ### Sign up
 
-`POST /api/auth/signup` creates a user and a database-backed session. The signup form accepts a full name, country, email or mobile identifier, and password. The identifier is stored in the user's existing `email` field.
+`POST /api/auth/signup` creates a user and a database-backed session. The signup form accepts a full name, country, email or mobile identifier, password, and the selected business type. The identifier is stored in the user's existing `email` field.
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
   -H 'Content-Type: application/json' \
-  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW"}'
+  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW","businessType":"event-organizer"}'
 ```
 
 Supported signup country codes are `MW` (Malawi), `ZM` (Zambia), `ZW` (Zimbabwe), `MZ` (Mozambique), `TZ` (Tanzania), `ZA` (South Africa), `BW` (Botswana), and `NA` (Namibia). The `country` field is optional for existing clients and is persisted on the user record when supplied.
 
-The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, and `refreshExpiresAt`. Keep the access token and refresh token secure.
+The `businessType` field is required and must match one of the seeded types from `GET /api/business-types`. It is stored on the user record via `business_type_id`.
+
+The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, `refreshExpiresAt`, and a `user` object containing the selected `businessType`.
+
+To change the business type later, call `PATCH /api/auth/signup` with a bearer token:
+
+```bash
+curl -X PATCH https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"businessType":"bus-operator"}'
+```
 
 ### Log in
 
-`POST /api/auth/login` accepts the same email and password and returns a new session.
+`POST /api/auth/login` accepts the same email and password and returns a new session. The response's `user` object includes the stored `businessType`.
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"owner@example.com","password":"Password123!"}'
 ```
+
+### Continue with Google
+
+`POST /api/auth/google` accepts the Google `idToken` plus `email`, `name`, and `avatar`. On **first-time** Google sign-in (new account), the request must also include `businessType` — the selected business type is stored on the new user. For returning Google users the business type is already known, so `businessType` is optional; when supplied it updates the stored value.
+
+```bash
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/google \
+  -H 'Content-Type: application/json' \
+  -d '{"idToken":"<google-id-token>","email":"owner@example.com","name":"Business Owner","businessType":"event-organizer"}'
+```
+
+The response's `user` object always includes the linked `businessType`.
 
 For protected endpoints, send the access token as a bearer token:
 
@@ -75,7 +118,7 @@ Authorization: Bearer <token>
 
 ### Current user
 
-`GET /api/auth/me` returns the authenticated user.
+`GET /api/auth/me` returns the authenticated user, including the linked `businessType`.
 
 ```bash
 curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/me \
