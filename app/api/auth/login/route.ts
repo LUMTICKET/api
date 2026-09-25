@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserByEmail, comparePassword, signToken } from "@/lib/auth";
 import { createSession } from "@/lib/session";
+import {
+  getBusinessTypeForUser,
+  serializeBusinessType,
+} from "@/lib/business-types";
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,6 +43,8 @@ export async function POST(req: NextRequest) {
       sessionId: session.sessionId,
     });
 
+    const businessType = await getBusinessTypeForUser(user.id);
+
     return NextResponse.json({
       token,
       refreshToken: session.refreshToken,
@@ -50,6 +56,7 @@ export async function POST(req: NextRequest) {
         email: user.email,
         name: user.name,
         avatar: user.avatar,
+        businessType: serializeBusinessType(businessType),
       },
     });
   } catch (err) {
