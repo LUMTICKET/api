@@ -36,6 +36,20 @@
       "when": 1788864000000,
       "tag": "0004_add_business_types",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788950400000,
+      "tag": "0005_add_business_type_reference",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789036800000,
+      "tag": "0006_operational_tables",
+      "breakpoints": true
     }
   ]
 }
