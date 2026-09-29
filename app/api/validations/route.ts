@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
+import { events, parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { getProfileByUserId, parseId } from "@/lib/ownership";
@@ -59,8 +59,8 @@ export async function POST(req: NextRequest) {
         const [ticket] = await db
           .select({ id: ticketTypes.id })
           .from(ticketTypes)
-          .innerJoin(parcels, eq(ticketTypes.eventId, parcels.id))
-          .where(eq(ticketTypes.id, numericId))
+          .innerJoin(events, eq(ticketTypes.eventId, events.id))
+          .where(and(eq(ticketTypes.id, numericId), eq(events.businessProfileId, profile.id)))
           .limit(1);
         exists = Boolean(ticket);
       }

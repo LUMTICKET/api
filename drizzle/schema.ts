@@ -11,6 +11,7 @@ import {
   numeric,
   date,
   unique,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 
 /* ── Business types (reference/lookup table, seeded by default) ── */
@@ -590,25 +591,36 @@ export const schedules = pgTable("schedules", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
-export const driverAssignments = pgTable("driver_assignments", {
-  id: serial("id").primaryKey(),
-  businessProfileId: integer("business_profile_id")
-    .notNull()
-    .references(() => businessProfiles.id, { onDelete: "cascade" }),
-  driverId: integer("driver_id")
-    .notNull()
-    .references(() => drivers.id, { onDelete: "cascade" }),
-  vehicleId: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
-  scheduleId: integer("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
-  status: varchar("status", { length: 20 })
-    .notNull()
-    .default("upcoming")
-    .$type<"upcoming" | "in-progress" | "completed">(),
-  passengerCount: integer("passenger_count").notNull().default(0),
-  parcelCount: integer("parcel_count").notNull().default(0),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
-});
+export const driverAssignments = pgTable(
+  "driver_assignments",
+  {
+    id: serial("id").primaryKey(),
+    businessProfileId: integer("business_profile_id")
+      .notNull()
+      .references(() => businessProfiles.id, { onDelete: "cascade" }),
+    driverId: integer("driver_id")
+      .notNull()
+      .references(() => drivers.id, { onDelete: "cascade" }),
+    vehicleId: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+    scheduleId: integer("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
+    status: varchar("status", { length: 20 })
+      .notNull()
+      .default("upcoming")
+      .$type<"upcoming" | "in-progress" | "completed">(),
+    passengerCount: integer("passenger_count").notNull().default(0),
+    parcelCount: integer("parcel_count").notNull().default(0),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Auto-generated inline-FK name (62 chars) exceeds Postgres's 63-char identifier limit.
+    foreignKey({
+      name: "driver_assignments_profile_fk",
+      columns: [table.businessProfileId],
+      foreignColumns: [businessProfiles.id],
+    }).onDelete("cascade"),
+  ],
+);
 
 /* ── §4 Field operations, scanning & POS ── */
 export const scanEvents = pgTable("scan_events", {
@@ -684,18 +696,29 @@ export const couriers = pgTable("couriers", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
-export const complianceDocuments = pgTable("compliance_documents", {
-  id: serial("id").primaryKey(),
-  businessProfileId: integer("business_profile_id")
-    .notNull()
-    .references(() => businessProfiles.id, { onDelete: "cascade" }),
-  subject: varchar("subject", { length: 255 }).notNull(),
-  kind: varchar("kind", { length: 255 }).notNull(),
-  expiresAt: date("expires_at").notNull(),
-  documentUrl: text("document_url"),
-  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
-});
+export const complianceDocuments = pgTable(
+  "compliance_documents",
+  {
+    id: serial("id").primaryKey(),
+    businessProfileId: integer("business_profile_id")
+      .notNull()
+      .references(() => businessProfiles.id, { onDelete: "cascade" }),
+    subject: varchar("subject", { length: 255 }).notNull(),
+    kind: varchar("kind", { length: 255 }).notNull(),
+    expiresAt: date("expires_at").notNull(),
+    documentUrl: text("document_url"),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    // Auto-generated inline-FK name (64 chars) exceeds Postgres's 63-char identifier limit.
+    foreignKey({
+      name: "compliance_documents_profile_fk",
+      columns: [table.businessProfileId],
+      foreignColumns: [businessProfiles.id],
+    }).onDelete("cascade"),
+  ],
+);
 
 /* ── §6 Finance & settlement ── */
 export const settlements = pgTable("settlements", {
