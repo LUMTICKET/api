@@ -170,7 +170,7 @@ CREATE TABLE "till_sessions" (
 
 CREATE TABLE "driver_assignments" (
   "id" serial PRIMARY KEY,
-  "business_profile_id" integer NOT NULL REFERENCES "business_profiles"("id") ON DELETE CASCADE,
+  "business_profile_id" integer NOT NULL CONSTRAINT "driver_assignments_profile_fk" REFERENCES "business_profiles"("id") ON DELETE CASCADE,
   "driver_id" integer NOT NULL REFERENCES "drivers"("id") ON DELETE CASCADE,
   "vehicle_id" integer REFERENCES "vehicles"("id") ON DELETE SET NULL,
   "schedule_id" integer REFERENCES "schedules"("id") ON DELETE SET NULL,
@@ -183,7 +183,7 @@ CREATE TABLE "driver_assignments" (
 
 CREATE TABLE "compliance_documents" (
   "id" serial PRIMARY KEY,
-  "business_profile_id" integer NOT NULL REFERENCES "business_profiles"("id") ON DELETE CASCADE,
+  "business_profile_id" integer NOT NULL CONSTRAINT "compliance_documents_profile_fk" REFERENCES "business_profiles"("id") ON DELETE CASCADE,
   "subject" varchar(255) NOT NULL,
   "kind" varchar(255) NOT NULL,
   "expires_at" date NOT NULL,
