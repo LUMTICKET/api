@@ -322,10 +322,100 @@ async function publishEvent(token: string, businessProfileId: number, payload: a
 }
 ```
 
+## Operational API (catalog, bookings, fleet, POS, finance, admin)
+
+The operational tables (see `drizzle/migrations/0006_operational_tables.sql`) are bootstrapped
+idempotently at request time, so no manual migration step is required on a fresh database.
+Monetary amounts are integer minor units and default to `MWK` unless a `currency` is supplied.
+All authenticated endpoints use the same bearer token as the rest of the API.
+
+### Public catalog & discovery
+
+- `GET /api/countries` — seeded country list (code, name, currency, flag, `live` flag).
+- `GET /api/catalog/routes?origin=&destination=&q=` — published bus routes with the operator
+  business name, `fromPrice`, duration, rating, and departures per day.
+- `GET /api/catalog/events?country=&q=` — published, on-sale events across all operators with
+  derived `status` (`on-sale` / `selling-fast` / `sold-out`) and `fromPrice`.
+
+### Customer bookings & parcels
+
+- `GET /api/bookings` — the authenticated customer's bookings (kind `bus` | `event` | `parcel`).
+- `POST /api/bookings` — create a booking ({kind, title, scheduledFor, amount, ...}); the
+  `LMT-` reference is generated automatically.
+- `GET /api/bookings/:reference` — one owned booking by reference.
+- `POST /api/parcels` — send a parcel ({senderName, recipientName, origin, destination,
+  weightKg?, courierId?}); cost defaults to base fee + per-kg and the first tracking event is
+  written.
+- `GET /api/parcels/:reference/tracking` — public tracking timeline (recipient names masked for
+  non-owners).
+
+### Operator operations (owned business profile)
+
+All operator endpoints resolve the caller's business profile automatically; a missing profile
+returns `404`.
+
+- `/api/bus-bookings` — `GET` list, `POST` create ({scheduleId?, customerName, seats[], amount,
+  channel `online|pos`, status `confirmed|checked-in|cancelled`}), `PUT ?id=`, `DELETE ?id=`.
+  Confirmed bookings bump the schedule's `seats_sold`; overbooking returns `409`.
+- `/api/fleet` — vehicles CRUD (plate, type, capacity, status, roadworthy expiry).
+- `/api/schedules` — departures CRUD joined with route/vehicle/driver; `PUT` moves status
+  through `scheduled → boarding → departed → completed`.
+- `/api/drivers` — driver roster CRUD; `/api/assignments` — driver assignments CRUD
+  ({driverId required, vehicleId?, scheduleId?, passengerCount, parcelCount, status
+  `upcoming|in-progress|completed`}).
+- `/api/couriers` — courier roster CRUD; `GET` derives `activeParcels` per courier; deletion
+  detaches their parcels instead of dropping history.
+- `/api/compliance` — compliance documents CRUD ({subject, kind, expiresAt, documentUrl?});
+  `GET` computes `daysLeft` per document.
+- `/api/validations` — `POST` resolves a scanned code ({code, kind `ticket|parcel`, mode
+  `auto|manual`, device?, synced?, occurredAt?}) against parcels/tickets and records
+  `valid | invalid | duplicate`; `GET` returns the scan log. Offline scans can be replayed with
+  `synced: false` and their original `occurredAt`.
+- `/api/pos/transactions` — `GET` agent transactions, `POST` record a sale ({kind
+  `bus-ticket|parcel|event-ticket`, amount, method `cash|mobile-money`, reference?}).
+- `/api/pos/tills` — `POST` open a till ({openingFloat, limitAmount?}; `409` if one is already
+  open), `GET` current open till + today's cash/mobile totals + history, `PUT ?id=` closes the
+  till and stores the totals computed from its transactions.
+
+### Finance
+
+- `GET /api/finance/settlements?status=pending|paid` — settlements for the owned profile
+  (period, gross/commission/net amounts, `paidAt` when settled).
+
+### Platform administration
+
+Admin endpoints require a platform role via `user_platform_roles`. On a fresh install (no roles
+assigned yet) any authenticated user passes so the endpoints are usable out of the box; assign
+roles and set `ADMIN_STRICT=1` to lock this down. Every admin mutation writes to the platform
+audit log.
+
+- `GET /api/admin/commission` / `PUT /api/admin/commission` — commission rules per service
+  (`bus`, `events`, `parcels`, `agent`, `gateway`); `PUT {service, rate}` upserts and audits.
+- `GET /api/admin/kyc` — KYC review queue joined with business profiles. `POST /api/admin/kyc`
+  decides ({id, status `approved|rejected|re-verification`, riskTier?}); approving also sets
+  `business_profiles.is_verified`.
+- `GET /api/admin/operators` — operators & agents directory (type, country, commission rate,
+  account status). `PATCH /api/admin/operators?id=<profileId>` sets {accountStatus
+  `active|suspended`}.
+- `/api/admin/reconciliation` — `GET` flags, `POST {gatewayRef, amount?, currency?, issue?}`
+  create, `PATCH ?id=` resolves {status `auto-refunded|booking-completed|needs-review`}.
+- `GET /api/admin/platform-audit` — platform-level audit trail (actor, action, target).
+- `/api/admin/support-cases` — `GET` list with `?status=`/`?kind=` filters, `POST
+  {customerName, subject, reference?, kind?}`, `PATCH ?id=` moves {status
+  `open|waiting|resolved`}.
+- `/api/admin/roles` — `GET` roles with permission keys + the full permission list, `POST`
+  create role ({name, scope `platform|operator|field`, permissions?}), `PUT ?name=<role>`
+  replaces the role's permission set ({permissions: ["manage-commission", ...]}).
+
+### KYB integration
+
+`POST /api/kyb` now also seeds a pending `kyc_reviews` row for the created profile, so new
+businesses appear in the platform KYC queue immediately. `POST`/`PUT /api/events` accept the
+catalog fields `venue`, `city`, and `countryCode` used by the public events listing.
+
 ## Team roles
 
 Only the business profile owner can create or list roles.
-
 ### Create a role
 
 `POST /api/team/roles`:

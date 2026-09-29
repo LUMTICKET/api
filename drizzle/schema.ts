@@ -8,6 +8,9 @@ import {
   integer,
   boolean,
   jsonb,
+  numeric,
+  date,
+  unique,
 } from "drizzle-orm/pg-core";
 
 /* ── Business types (reference/lookup table, seeded by default) ── */
@@ -73,6 +76,11 @@ export const businessProfiles = pgTable("business_profiles", {
   description: text("description"),
   category: varchar("category", { length: 100 }),
   isVerified: boolean("is_verified").default(false).notNull(),
+  commissionRate: numeric("commission_rate", { precision: 5, scale: 2 }),
+  accountStatus: varchar("account_status", { length: 20 })
+    .notNull()
+    .default("active")
+    .$type<"active" | "suspended">(),
   executives: jsonb("executives").$type<Executive[]>().default([]),
   documents: jsonb("documents").$type<BusinessDoc[]>().default([]),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
@@ -195,6 +203,9 @@ export const events = pgTable("events", {
   organizer: varchar("organizer", { length: 255 }),
   description: text("description"),
   location: varchar("location", { length: 255 }).notNull(),
+  venue: varchar("venue", { length: 255 }),
+  city: varchar("city", { length: 100 }),
+  countryCode: varchar("country_code", { length: 2 }),
   startsAt: timestamp("starts_at", { mode: "date" }).notNull(),
   endsAt: timestamp("ends_at", { mode: "date" }),
   image: text("image"),
@@ -406,3 +417,484 @@ export type DocType =
   | "other";
 
 export type TeamRole = "admin" | "operator" | "viewer";
+
+/* ════════════════════════════════════════════════════════════════
+   Operational tables (catalog, bookings, fleet, field ops, finance,
+   platform admin) — see "Database Requirements" spec / API.md
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── §1.1 Countries (public catalog) ── */
+export const countries = pgTable("countries", {
+  code: varchar("code", { length: 2 }).primaryKey(),
+  name: text("name").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull(),
+  flag: varchar("flag", { length: 8 }),
+  live: boolean("live").default(false).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §1.2 Bus routes (public catalog) ── */
+export const busRoutes = pgTable("bus_routes", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  origin: varchar("origin", { length: 255 }).notNull(),
+  destination: varchar("destination", { length: 255 }).notNull(),
+  duration: varchar("duration", { length: 50 }),
+  fromPrice: integer("from_price"),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  departuresPerDay: integer("departures_per_day").default(1).notNull(),
+  rating: numeric("rating", { precision: 2, scale: 1 }),
+  isPublished: boolean("is_published").default(true).notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §2.1 Unified customer bookings (read model over bus/event/parcel) ── */
+export const bookings = pgTable("bookings", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  kind: varchar("kind", { length: 20 })
+    .notNull()
+    .$type<"bus" | "event" | "parcel">(),
+  reference: varchar("reference", { length: 64 }).notNull().unique(),
+  title: text("title").notNull(),
+  detail: text("detail"),
+  scheduledFor: timestamp("scheduled_for", { mode: "date", withTimezone: true }).notNull(),
+  amount: integer("amount").notNull().default(0),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("upcoming")
+    .$type<"upcoming" | "completed" | "in-transit" | "delivered" | "cancelled">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §2.2 Operator-side bus bookings ── */
+export const busBookings = pgTable("bus_bookings", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  reference: varchar("reference", { length: 64 }).notNull().unique(),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  scheduleId: integer("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
+  seats: jsonb("seats").$type<string[]>().default([]),
+  amount: integer("amount").notNull().default(0),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  channel: varchar("channel", { length: 20 })
+    .notNull()
+    .default("online")
+    .$type<"online" | "pos">(),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("confirmed")
+    .$type<"confirmed" | "checked-in" | "cancelled">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §2.3 Parcels + scan history ── */
+export const parcels = pgTable("parcels", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  reference: varchar("reference", { length: 64 }).notNull().unique(),
+  senderName: varchar("sender_name", { length: 255 }).notNull(),
+  recipientName: varchar("recipient_name", { length: 255 }).notNull(),
+  origin: varchar("origin", { length: 255 }).notNull(),
+  destination: varchar("destination", { length: 255 }).notNull(),
+  weightKg: numeric("weight_kg", { precision: 6, scale: 2 }),
+  courierId: integer("courier_id"),
+  status: varchar("status", { length: 30 })
+    .notNull()
+    .default("registered")
+    .$type<"registered" | "in-transit" | "out-for-delivery" | "delivered" | "failed">(),
+  amount: integer("amount").notNull().default(0),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const parcelEvents = pgTable("parcel_events", {
+  id: serial("id").primaryKey(),
+  parcelId: integer("parcel_id")
+    .notNull()
+    .references(() => parcels.id, { onDelete: "cascade" }),
+  location: varchar("location", { length: 255 }),
+  status: varchar("status", { length: 30 })
+    .notNull()
+    .$type<"registered" | "in-transit" | "out-for-delivery" | "delivered" | "failed">(),
+  scannedBy: varchar("scanned_by", { length: 255 }),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ── §3 Bus operator operations ── */
+export const vehicles = pgTable("vehicles", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  plate: varchar("plate", { length: 30 }).notNull(),
+  type: varchar("type", { length: 100 }),
+  capacity: integer("capacity").notNull().default(0),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("active")
+    .$type<"active" | "maintenance" | "inactive">(),
+  roadworthyExpiry: date("roadworthy_expiry"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const drivers = pgTable("drivers", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("available")
+    .$type<"available" | "on-trip" | "off-duty">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const schedules = pgTable("schedules", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  routeId: integer("route_id")
+    .notNull()
+    .references(() => busRoutes.id, { onDelete: "cascade" }),
+  vehicleId: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+  driverId: integer("driver_id").references(() => drivers.id, { onDelete: "set null" }),
+  departureAt: timestamp("departure_at", { mode: "date", withTimezone: true }).notNull(),
+  seatsTotal: integer("seats_total").notNull().default(0),
+  seatsSold: integer("seats_sold").notNull().default(0),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("scheduled")
+    .$type<"scheduled" | "boarding" | "departed" | "completed">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const driverAssignments = pgTable("driver_assignments", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  driverId: integer("driver_id")
+    .notNull()
+    .references(() => drivers.id, { onDelete: "cascade" }),
+  vehicleId: integer("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+  scheduleId: integer("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("upcoming")
+    .$type<"upcoming" | "in-progress" | "completed">(),
+  passengerCount: integer("passenger_count").notNull().default(0),
+  parcelCount: integer("parcel_count").notNull().default(0),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §4 Field operations, scanning & POS ── */
+export const scanEvents = pgTable("scan_events", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  code: varchar("code", { length: 255 }).notNull(),
+  kind: varchar("kind", { length: 20 })
+    .notNull()
+    .$type<"ticket" | "parcel">(),
+  result: varchar("result", { length: 20 })
+    .notNull()
+    .$type<"valid" | "invalid" | "duplicate">(),
+  mode: varchar("mode", { length: 20 })
+    .notNull()
+    .default("auto")
+    .$type<"auto" | "manual">(),
+  device: varchar("device", { length: 100 }),
+  synced: boolean("synced").default(true).notNull(),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+});
+
+export const posTransactions = pgTable("pos_transactions", {
+  id: serial("id").primaryKey(),
+  agentProfileId: integer("agent_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  kind: varchar("kind", { length: 20 })
+    .notNull()
+    .$type<"bus-ticket" | "parcel" | "event-ticket">(),
+  reference: varchar("reference", { length: 64 }),
+  amount: integer("amount").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  method: varchar("method", { length: 20 })
+    .notNull()
+    .default("cash")
+    .$type<"cash" | "mobile-money">(),
+});
+
+export const tillSessions = pgTable("till_sessions", {
+  id: serial("id").primaryKey(),
+  agentProfileId: integer("agent_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  openedAt: timestamp("opened_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  closedAt: timestamp("closed_at", { mode: "date", withTimezone: true }),
+  openingFloat: integer("opening_float").notNull().default(0),
+  limitAmount: integer("limit_amount"),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  cashSales: integer("cash_sales"),
+  mobileSales: integer("mobile_sales"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §5 Courier operations ── */
+export const couriers = pgTable("couriers", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
+  name: varchar("name", { length: 255 }).notNull(),
+  zone: varchar("zone", { length: 255 }),
+  vehicle: varchar("vehicle", { length: 255 }),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("available")
+    .$type<"available" | "on-route" | "off-duty">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const complianceDocuments = pgTable("compliance_documents", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  kind: varchar("kind", { length: 255 }).notNull(),
+  expiresAt: date("expires_at").notNull(),
+  documentUrl: text("document_url"),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── §6 Finance & settlement ── */
+export const settlements = pgTable("settlements", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  grossAmount: integer("gross_amount").notNull().default(0),
+  commissionAmount: integer("commission_amount").notNull().default(0),
+  netAmount: integer("net_amount").notNull().default(0),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("pending")
+    .$type<"pending" | "paid">(),
+  paidAt: timestamp("paid_at", { mode: "date", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const commissionRules = pgTable("commission_rules", {
+  id: serial("id").primaryKey(),
+  service: varchar("service", { length: 20 })
+    .notNull()
+    .unique()
+    .$type<"bus" | "events" | "parcels" | "agent" | "gateway">(),
+  rate: numeric("rate", { precision: 4, scale: 2 }).notNull(),
+  effectiveFrom: timestamp("effective_from", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const reconciliationFlags = pgTable("reconciliation_flags", {
+  id: serial("id").primaryKey(),
+  gatewayRef: varchar("gateway_ref", { length: 100 }).notNull().unique(),
+  amount: integer("amount").notNull().default(0),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  issue: text("issue"),
+  status: varchar("status", { length: 30 })
+    .notNull()
+    .default("needs-review")
+    .$type<"auto-refunded" | "booking-completed" | "needs-review">(),
+  detectedAt: timestamp("detected_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+});
+
+/* ── §7 Platform administration ── */
+export const kycReviews = pgTable("kyc_reviews", {
+  id: serial("id").primaryKey(),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" })
+    .unique(),
+  submittedAt: timestamp("submitted_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  riskTier: varchar("risk_tier", { length: 10 })
+    .notNull()
+    .default("low")
+    .$type<"low" | "medium" | "high">(),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("pending")
+    .$type<"pending" | "approved" | "rejected" | "re-verification">(),
+  reviewerId: integer("reviewer_id").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { mode: "date", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const permissions = pgTable("permissions", {
+  id: serial("id").primaryKey(),
+  key: varchar("key", { length: 64 }).notNull().unique(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const platformRoles = pgTable("platform_roles", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 100 }).notNull().unique(),
+  scope: varchar("scope", { length: 20 })
+    .notNull()
+    .default("platform")
+    .$type<"platform" | "operator" | "field">(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+export const platformRolePermissions = pgTable("platform_role_permissions", {
+  id: serial("id").primaryKey(),
+  roleId: integer("role_id")
+    .notNull()
+    .references(() => platformRoles.id, { onDelete: "cascade" }),
+  permissionId: integer("permission_id")
+    .notNull()
+    .references(() => permissions.id, { onDelete: "cascade" }),
+}, (table) => ({
+  rolePermissionUnique: unique("platform_role_permissions_role_permission_unique").on(table.roleId, table.permissionId),
+}));
+
+export const userPlatformRoles = pgTable("user_platform_roles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  roleId: integer("role_id")
+    .notNull()
+    .references(() => platformRoles.id, { onDelete: "cascade" }),
+}, (table) => ({
+  userRoleUnique: unique("user_platform_roles_user_role_unique").on(table.userId, table.roleId),
+}));
+
+export const platformAuditLog = pgTable("platform_audit_log", {
+  id: serial("id").primaryKey(),
+  actor: varchar("actor", { length: 255 }).notNull(),
+  action: text("action").notNull(),
+  target: text("target"),
+  occurredAt: timestamp("occurred_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+});
+
+export const supportCases = pgTable("support_cases", {
+  id: serial("id").primaryKey(),
+  reference: varchar("reference", { length: 64 }),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  subject: text("subject").notNull(),
+  kind: varchar("kind", { length: 20 })
+    .notNull()
+    .default("bus")
+    .$type<"bus" | "event" | "parcel">(),
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("open")
+    .$type<"open" | "waiting" | "resolved">(),
+  openedAt: timestamp("opened_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── Operational-table relations (subset used by queries) ── */
+export const busRoutesRelations = relations(busRoutes, ({ one }) => ({
+  operator: one(businessProfiles, {
+    fields: [busRoutes.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+}));
+
+export const parcelsRelations = relations(parcels, ({ one, many }) => ({
+  operator: one(businessProfiles, {
+    fields: [parcels.businessProfileId],
+    references: [businessProfiles.id],
+  }),
+  courier: one(couriers, {
+    fields: [parcels.courierId],
+    references: [couriers.id],
+  }),
+  events: many(parcelEvents),
+}));
+
+export const parcelEventsRelations = relations(parcelEvents, ({ one }) => ({
+  parcel: one(parcels, {
+    fields: [parcelEvents.parcelId],
+    references: [parcels.id],
+  }),
+}));
+
+export const schedulesRelations = relations(schedules, ({ one }) => ({
+  route: one(busRoutes, {
+    fields: [schedules.routeId],
+    references: [busRoutes.id],
+  }),
+  vehicle: one(vehicles, {
+    fields: [schedules.vehicleId],
+    references: [vehicles.id],
+  }),
+  driver: one(drivers, {
+    fields: [schedules.driverId],
+    references: [drivers.id],
+  }),
+}));
+
+/* ── Operational-table types ── */
+export type Country = typeof countries.$inferSelect;
+export type BusRoute = typeof busRoutes.$inferSelect;
+export type NewBusRoute = typeof busRoutes.$inferInsert;
+export type Booking = typeof bookings.$inferSelect;
+export type NewBooking = typeof bookings.$inferInsert;
+export type BusBooking = typeof busBookings.$inferSelect;
+export type Parcel = typeof parcels.$inferSelect;
+export type ParcelEvent = typeof parcelEvents.$inferSelect;
+export type Vehicle = typeof vehicles.$inferSelect;
+export type Driver = typeof drivers.$inferSelect;
+export type Schedule = typeof schedules.$inferSelect;
+export type DriverAssignment = typeof driverAssignments.$inferSelect;
+export type ScanEvent = typeof scanEvents.$inferSelect;
+export type PosTransaction = typeof posTransactions.$inferSelect;
+export type TillSession = typeof tillSessions.$inferSelect;
+export type Courier = typeof couriers.$inferSelect;
+export type ComplianceDocument = typeof complianceDocuments.$inferSelect;
+export type Settlement = typeof settlements.$inferSelect;
+export type CommissionRule = typeof commissionRules.$inferSelect;
+export type ReconciliationFlag = typeof reconciliationFlags.$inferSelect;
+export type KycReview = typeof kycReviews.$inferSelect;
+export type Permission = typeof permissions.$inferSelect;
+export type PlatformRole = typeof platformRoles.$inferSelect;
+export type PlatformAuditEntry = typeof platformAuditLog.$inferSelect;
+export type SupportCase = typeof supportCases.$inferSelect;
