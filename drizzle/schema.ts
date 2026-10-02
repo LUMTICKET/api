@@ -29,14 +29,44 @@ export const businessTypes = pgTable("business_types", {
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: varchar("email", { length: 255 }).notNull().unique(),
+  phone: varchar("phone", { length: 50 }).unique(),
   password: text("password"),
   name: varchar("name", { length: 255 }),
   country: varchar("country", { length: 2 }),
+  /** Unique human-readable Business ID used as a login identifier. */
+  businessId: varchar("business_id", { length: 32 }).unique(),
+  /** True once the account belongs to a business (owner or team member). */
+  isInBusiness: boolean("is_in_business").default(false).notNull(),
+  /**
+   * Which business this account operates inside (owner profile or joined
+   * team). The FK to business_profiles lives in SQL (migration 0007) rather
+   * than in `references()` to keep drizzle's type inference from becoming
+   * circular with business_profiles.user_id.
+   */
+  businessProfileId: integer("business_profile_id"),
+  /** Two-factor authentication is enforced on password logins by default. */
+  twoFactorEnabled: boolean("two_factor_enabled").default(true).notNull(),
   businessTypeId: integer("business_type_id").references(() => businessTypes.id, {
     onDelete: "set null",
   }),
   avatar: text("avatar"),
   googleId: varchar("google_id", { length: 255 }).unique(),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
+/* ── Two-factor login challenges (code sent to the account email) ── */
+export const twoFactorChallenges = pgTable("two_factor_challenges", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  token: varchar("token", { length: 255 }).notNull().unique(),
+  codeHash: varchar("code_hash", { length: 255 }).notNull(),
+  channel: varchar("channel", { length: 20 }).notNull().default("email"),
+  attempts: integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+  consumedAt: timestamp("consumed_at", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
@@ -63,16 +93,23 @@ export const businessProfiles = pgTable("business_profiles", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" })
     .unique(),
+  /** Selected during business registration (minimal first form). */
+  businessTypeId: integer("business_type_id").references(
+    () => businessTypes.id,
+    { onDelete: "set null" }
+  ),
   type: varchar("type", { length: 20 }).notNull().$type<"individual" | "company">(),
   businessName: varchar("business_name", { length: 255 }).notNull(),
   tradingName: varchar("trading_name", { length: 255 }),
   registrationNumber: varchar("registration_number", { length: 100 }),
   taxId: varchar("tax_id", { length: 100 }),
-  email: varchar("email", { length: 255 }).notNull(),
-  phone: varchar("phone", { length: 50 }).notNull(),
-  address: varchar("address", { length: 255 }).notNull(),
-  city: varchar("city", { length: 100 }).notNull(),
-  country: varchar("country", { length: 100 }).notNull(),
+  // KYB detail fields are completed from the dashboard after the minimal
+  // business registration, so they stay nullable on purpose.
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 50 }),
+  address: varchar("address", { length: 255 }),
+  city: varchar("city", { length: 100 }),
+  country: varchar("country", { length: 100 }),
   website: varchar("website", { length: 255 }),
   description: text("description"),
   category: varchar("category", { length: 100 }),
@@ -242,6 +279,11 @@ export const usersRelations = relations(users, ({ one, many }) => ({
     fields: [users.businessTypeId],
     references: [businessTypes.id],
   }),
+  activeBusiness: one(businessProfiles, {
+    fields: [users.businessProfileId],
+    references: [businessProfiles.id],
+    relationName: "activeBusiness",
+  }),
   teamMemberships: many(teamMembers),
   sentInvitations: many(teamInvitations, {
     relationName: "sentInvitations",
@@ -275,6 +317,11 @@ export const businessProfilesRelations = relations(businessProfiles, ({ one, man
     fields: [businessProfiles.userId],
     references: [users.id],
   }),
+  businessType: one(businessTypes, {
+    fields: [businessProfiles.businessTypeId],
+    references: [businessTypes.id],
+  }),
+  members: many(users, { relationName: "activeBusiness" }),
   teamMembers: many(teamMembers),
   invitations: many(teamInvitations),
   payments: many(payments),
@@ -376,6 +423,8 @@ export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+export type TwoFactorChallenge = typeof twoFactorChallenges.$inferSelect;
+export type NewTwoFactorChallenge = typeof twoFactorChallenges.$inferInsert;
 export type BusinessProfile = typeof businessProfiles.$inferSelect;
 export type NewBusinessProfile = typeof businessProfiles.$inferInsert;
 export type TeamRoleRecord = typeof teamRoles.$inferSelect;
