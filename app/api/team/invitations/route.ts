@@ -4,11 +4,15 @@ import crypto from "crypto";
 import { db } from "@/lib/db";
 import { businessProfiles, teamInvitations, teamRoles } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
+import { isValidEmail } from "@/lib/auth";
+import { ensureAuthSchema } from "@/lib/ensure-auth-schema";
 import { sendInvitationEmail } from "@/lib/email";
 import { createAuditLog } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const user = await getCurrentUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -19,6 +23,13 @@ export async function POST(req: NextRequest) {
     if (!businessProfileId || !email || !name) {
       return NextResponse.json(
         { error: "businessProfileId, email and name are required" },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidEmail(email)) {
+      return NextResponse.json(
+        { error: "Enter a valid email address" },
         { status: 400 }
       );
     }
@@ -51,7 +62,7 @@ export async function POST(req: NextRequest) {
       .insert(teamInvitations)
       .values({
         businessProfileId,
-        email,
+        email: String(email).trim().toLowerCase(),
         name,
         role: role ?? "viewer",
         roleId: resolvedRoleId,
@@ -96,6 +107,8 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const user = await getCurrentUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,17 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { users } from "@/drizzle/schema";
-import { signToken, getUserByEmail } from "@/lib/auth";
-import { createSession } from "@/lib/session";
 import {
-  getBusinessTypeForUser,
-  resolveBusinessType,
-  serializeBusinessType,
-} from "@/lib/business-types";
+  getUserByEmail,
+  isValidEmail,
+  normalizeEmail,
+  startSessionForUser,
+} from "@/lib/auth";
+import { ensureAuthSchema } from "@/lib/ensure-auth-schema";
+import { allocateBusinessId, buildAuthUser } from "@/lib/identity";
+import { resolveBusinessType } from "@/lib/business-types";
 import { eq } from "drizzle-orm";
 
+/**
+ * POST /api/auth/google
+ *
+ * Google sign-in. The business is registered in its own step afterwards, so
+ * `businessType` is no longer required on first sign-in — when supplied it is
+ * only stored on the account for legacy clients. New Google accounts start
+ * with `isInBusiness: false` and the client takes them to business
+ * registration (or straight to the dashboard for returning users).
+ */
 export async function POST(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const { idToken, email, name, avatar, businessType } = await req.json();
 
     if (!idToken || !email) {
@@ -21,22 +34,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!isValidEmail(email)) {
+      return NextResponse.json(
+        { error: "Enter a valid email address" },
+        { status: 400 }
+      );
+    }
+
     // Verify the Google ID token on your server if you want extra safety
     // (omitted for brevity — use google-auth-library)
+    const normalizedEmail = normalizeEmail(email);
 
-    let user = await getUserByEmail(email);
-    let businessTypePayload: ReturnType<typeof serializeBusinessType> = null;
-
-    if (!user) {
-      // Creating a brand-new Google account: the first sign-in must include
-      // the business type the user operates.
-      if (businessType === undefined || businessType === null || businessType === "") {
-        return NextResponse.json(
-          { error: "businessType is required on first sign-in (id, slug, or name)" },
-          { status: 400 }
-        );
-      }
-
+    let businessTypeId: number | null = null;
+    if (businessType !== undefined && businessType !== null && businessType !== "") {
       const resolvedBusinessType = await resolveBusinessType(businessType);
       if (!resolvedBusinessType) {
         return NextResponse.json(
@@ -44,34 +54,33 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+      businessTypeId = resolvedBusinessType.id;
+    }
 
-      // Create new Google user
+    let user = await getUserByEmail(normalizedEmail);
+    const isNewAccount = !user;
+
+    if (!user) {
+      // Creating a brand-new Google account: credentials only, the business
+      // itself is registered in the following onboarding step.
+      const businessId = await allocateBusinessId();
       const [newUser] = await db
         .insert(users)
         .values({
-          email,
+          email: normalizedEmail,
           name: name || null,
           avatar: avatar || null,
           googleId: idToken.slice(-20), // or extract real sub from verified token
-          businessTypeId: resolvedBusinessType.id,
+          businessId,
+          businessTypeId,
         })
         .returning();
       user = newUser;
-      businessTypePayload = serializeBusinessType(resolvedBusinessType);
     } else {
-      // Existing account: business type already known (or updated via
-      // PATCH /api/auth/signup), so it is optional here.
-      if (businessType !== undefined && businessType !== null && businessType !== "") {
-        const resolvedBusinessType = await resolveBusinessType(businessType);
-        if (!resolvedBusinessType) {
-          return NextResponse.json(
-            { error: "Invalid businessType. See GET /api/business-types" },
-            { status: 400 }
-          );
-        }
+      if (businessTypeId !== null) {
         const [updated] = await db
           .update(users)
-          .set({ businessTypeId: resolvedBusinessType.id, updatedAt: new Date() })
+          .set({ businessTypeId, updatedAt: new Date() })
           .where(eq(users.id, user.id))
           .returning();
         user = updated;
@@ -88,33 +97,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const linkedBusinessType =
-      businessTypePayload ??
-      serializeBusinessType(await getBusinessTypeForUser(user.id));
-
-    const session = await createSession(user.id, user.email, {
-      userAgent: req.headers.get("user-agent"),
-      ipAddress: req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip"),
-    });
-    const token = signToken({
-      userId: user.id,
-      email: user.email,
-      sessionId: session.sessionId,
-    });
+    const session = await startSessionForUser(user, req);
+    const authUser = await buildAuthUser(user);
 
     return NextResponse.json({
-      token,
-      refreshToken: session.refreshToken,
-      sessionId: session.sessionId,
-      expiresAt: session.expiresAt,
-      refreshExpiresAt: session.refreshExpiresAt,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        avatar: user.avatar,
-        businessType: linkedBusinessType,
-      },
+      ...session,
+      user: authUser,
+      nextStep: authUser.isInBusiness ? "dashboard" : "register-business",
+      ...(isNewAccount ? { isNewAccount: true } : {}),
     });
   } catch (err) {
     console.error("Google auth error:", err);
