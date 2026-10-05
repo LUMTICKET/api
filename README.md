@@ -1,6 +1,12 @@
 # Lumticket API
 
-Next.js App Router API for authentication, business verification profiles, team roles, team invitations, sessions, and audit logs.
+Next.js App Router API for authentication, business verification profiles, team roles, team invitations, sessions, audit logs, and the full operational surface (catalog, bookings, parcels, fleet, dispatch, POS, finance, and platform administration).
+
+- [Frontend quick start](#frontend-quick-start) — base URL, CORS, and the complete endpoint index
+- [Wiring the frontend](#wiring-the-frontend) — typed client, sign-in/2FA, `nextStep` routing, screen-to-endpoint map
+- [Authentication](#authentication) — signup, login, two-factor, Google, sessions
+- [Business profile (KYB)](#business-profile-kyb), [Payments and events](#payments-and-events)
+- [Operational API](#operational-api-catalog-bookings-fleet-pos-finance-admin), [Team](#team-roles), [Audit logs](#audit-logs)
 
 ## Requirements
 
@@ -40,6 +46,359 @@ For SMTP providers that require implicit TLS, use port `465` or set `SMTP_SECURE
 ```bash
 npx drizzle-kit push
 ```
+
+## Frontend quick start
+
+- **Base URL (production):** `https://api-gamma-mocha-qn31xem8po.vercel.app`
+- **Base URL (local API):** `http://localhost:3000`
+- **Transport:** JSON request and response bodies. Send `Content-Type: application/json`
+  with any request that has a body.
+- **Auth:** every protected route expects `Authorization: Bearer <access token>`.
+- **CORS:** `middleware.ts` allows `https://lumticket.vercel.app`,
+  `https://lumiticketui.vercel.app`, `https://luticketnewui.vercel.app`,
+  `http://localhost:8081` (Expo), `http://localhost:19006`, and any
+  `https://localhost*` origin. Add your web client's origin there before shipping it.
+- **Sessions:** access tokens last 24 hours, refresh tokens 7 days and are rotated on
+  every use.
+- **Money:** every `amount` is an integer in minor units and defaults to `MWK` unless a
+  `currency` is supplied.
+
+### Complete endpoint index
+
+`Public` = no token required, `Bearer` = access token required,
+`Platform` = authenticated user holding a platform role (see
+[Platform administration](#platform-administration)).
+
+#### Authentication and identity
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/signup` | Public | Create login credentials only; returns `nextStep: "register-business"` |
+| `PATCH` | `/api/auth/signup` | Bearer | Change the account's stored business type |
+| `POST` | `/api/auth/login` | Public | Identifier (Business ID / email / phone) + password; starts the 2FA challenge |
+| `POST` | `/api/auth/2fa` | Public | Exchange `challengeToken` + 6-digit `code` for a session |
+| `POST` | `/api/auth/2fa/resend` | Public | Email a fresh code, keeping the same challenge token |
+| `POST` | `/api/auth/google` | Public | Google `idToken` sign-in (no API-side 2FA) |
+| `POST` | `/api/auth/refresh` | Public | Rotate the refresh token, return a new access token |
+| `POST` | `/api/auth/logout` | Bearer | Revoke the current session |
+| `GET` | `/api/auth/me` | Bearer | Identity, business linkage, role and permissions |
+| `GET` | `/api/business-types` | Public | Business types shown on the registration form |
+
+#### Onboarding and business profile (KYB)
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/business/register` | Bearer | Minimal business registration (`businessType`, `businessName`) |
+| `GET` | `/api/business/register` | Bearer | Registration status: `registered`, `missingFields`, `nextStep` |
+| `POST` | `/api/kyb` | Bearer | Full KYB form in one shot |
+| `GET` | `/api/kyb` | Bearer | The caller's own profile |
+| `GET` | `/api/kyb/:id` | Bearer | Owned profile by id |
+| `PUT` | `/api/kyb/:id` | Bearer | Partial profile update (omitted fields are kept) |
+| `DELETE` | `/api/kyb/:id` | Bearer | Delete the owned profile |
+
+#### Public catalog and customers
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/countries` | Public | Supported countries with currency and live flag |
+| `GET` | `/api/catalog/routes` | Public | Bus route search (`origin`, `destination`, `q`) |
+| `GET` | `/api/catalog/events` | Public | Published events with `fromPrice` and derived `status` |
+| `GET` | `/api/bookings` | Bearer | The caller's bookings (all kinds) |
+| `POST` | `/api/bookings` | Bearer | Record a booking (`kind`, `title`, `scheduledFor`) |
+| `GET` | `/api/bookings/:reference` | Bearer | One owned booking by `LMT-…` reference |
+| `GET` | `/api/parcels` | Bearer | Courier operator parcel queue |
+| `POST` | `/api/parcels` | Bearer | Send a parcel (auto-priced from weight) |
+| `GET` | `/api/parcels/:reference/tracking` | Public | Tracking timeline; names masked for non-owners |
+
+#### Operator operations (own business profile)
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` `POST` | `/api/bus-bookings` | Bearer | List / create bus bookings (seat inventory enforced) |
+| `PUT` `DELETE` | `/api/bus-bookings?id=` | Bearer | Update / remove a booking |
+| `GET` `POST` | `/api/fleet` | Bearer | Vehicles list / create (`plate` required) |
+| `PUT` `DELETE` | `/api/fleet?id=` | Bearer | Update / remove a vehicle |
+| `GET` `POST` | `/api/schedules` | Bearer | Departures list / create (`routeId`, `departureAt`) |
+| `PUT` `DELETE` | `/api/schedules?id=` | Bearer | Update (status, seats) / remove a departure |
+| `GET` `POST` | `/api/drivers` | Bearer | Driver roster |
+| `PUT` `DELETE` | `/api/drivers?id=` | Bearer | Update / remove a driver |
+| `GET` `POST` | `/api/assignments` | Bearer | Driver assignments (`driverId` required) |
+| `PUT` `DELETE` | `/api/assignments?id=` | Bearer | Update / remove an assignment |
+| `GET` `POST` | `/api/couriers` | Bearer | Courier roster with derived `activeParcels` |
+| `PUT` `DELETE` | `/api/couriers?id=` | Bearer | Update / remove a courier (parcels are detached) |
+| `GET` `POST` | `/api/compliance` | Bearer | Compliance documents (`expiresAt` required) |
+| `PUT` `DELETE` | `/api/compliance?id=` | Bearer | Update / remove a document |
+| `POST` | `/api/validations` | Bearer | Resolve a scanned code and log `valid`/`invalid`/`duplicate` |
+| `GET` | `/api/validations` | Bearer | Scan log, newest first |
+| `GET` `POST` | `/api/pos/transactions` | Bearer | Agent POS sales |
+| `POST` | `/api/pos/tills` | Bearer | Open a till (`409` if one is already open) |
+| `GET` | `/api/pos/tills` | Bearer | Open till + today's cash/mobile totals + history |
+| `PUT` | `/api/pos/tills?id=` | Bearer | Close the till and store its totals |
+
+#### Payments, events, finance
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/payments/simulate` | Bearer | Create a succeeded payment (`card`/`tnm`/`airtel`) |
+| `GET` | `/api/payments/simulate?businessProfileId=` | Bearer | Payments for an owned profile |
+| `POST` | `/api/events` | Bearer | Publish an event + ticket types (needs a succeeded `paymentId`) |
+| `GET` | `/api/events?businessProfileId=` | Bearer | Events for an owned profile |
+| `GET` | `/api/events/:id` | Bearer | Event with its ticket types (owner or team `admin`) |
+| `PUT` | `/api/events/:id` | Bearer | Partial event edit; include `tickets` to replace tiers |
+| `GET` | `/api/finance/settlements?status=` | Bearer | Settlements for an owned profile |
+
+#### Team and audit
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` `GET` | `/api/team/roles` | Bearer | Create / list roles (`GET` needs `?businessProfileId=`) |
+| `POST` `GET` | `/api/team/invitations` | Bearer | Send / list invitations (`GET` needs `?businessProfileId=`) |
+| `GET` | `/api/team/invitations/:token` | Public | Preview an invitation from the emailed link |
+| `POST` | `/api/team/invitations/:token` | Public | Accept; with `password` it also creates the member's credentials |
+| `GET` | `/api/audit?businessProfileId=` | Bearer | Business audit log |
+
+#### Platform administration
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` `PUT` | `/api/admin/commission` | Platform | Commission rules per service; `PUT {service, rate}` |
+| `GET` `POST` | `/api/admin/kyc` | Platform | KYC queue; `POST {id, status, riskTier?}` decides |
+| `GET` `PATCH` | `/api/admin/operators` | Platform | Operators directory; `PATCH ?id=` sets `accountStatus` |
+| `GET` `POST` `PATCH` | `/api/admin/reconciliation` | Platform | Payment flags; `PATCH ?id=` resolves one |
+| `GET` | `/api/admin/platform-audit` | Platform | Platform audit trail (last 200) |
+| `GET` `POST` `PATCH` | `/api/admin/support-cases` | Platform | Support console; `PATCH ?id=` moves `status` |
+| `GET` `POST` `PUT` | `/api/admin/roles` | Platform | Platform RBAC; `PUT ?name=` replaces permissions |
+
+## Wiring the frontend
+
+### 1. A typed client with automatic token refresh
+
+Copy this into the Expo/web client (`lib/api.ts`). It attaches the bearer token,
+refreshes once on `401`, and clears the session when refresh fails.
+
+```ts
+export const API_URL = "https://api-gamma-mocha-qn31xem8po.vercel.app";
+// local API: "http://localhost:3000"
+
+export type Tokens = { token: string; refreshToken: string };
+
+export class ApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
+let tokens: Tokens | null = null;
+let onSessionLost: (() => void) | undefined;
+
+export function setSession(next: Tokens | null) {
+  tokens = next;
+  // Persist in expo-secure-store / AsyncStorage, or memory only for web.
+  if (!next) onSessionLost?.();
+}
+export function getSession() {
+  return tokens;
+}
+export function setSessionLostHandler(handler: () => void) {
+  onSessionLost = handler;
+}
+
+async function refreshTokens(): Promise<boolean> {
+  if (!tokens?.refreshToken) return false;
+  const res = await fetch(`${API_URL}/api/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken: tokens.refreshToken }),
+  });
+  if (!res.ok) {
+    setSession(null);
+    return false;
+  }
+  const data = await res.json();
+  setSession({ token: data.token, refreshToken: data.refreshToken });
+  return true;
+}
+
+export async function api<T>(
+  path: string,
+  options: { method?: string; body?: unknown; auth?: boolean } = {},
+): Promise<T> {
+  const { method = "GET", body, auth = true } = options;
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(auth && tokens ? { Authorization: `Bearer ${tokens.token}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  // One transparent refresh-and-retry; never retry /api/auth/refresh itself.
+  if (res.status === 401 && tokens?.refreshToken && path !== "/api/auth/refresh") {
+    if (await refreshTokens()) return api<T>(path, options);
+  }
+
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiError(res.status, payload?.error ?? `Request failed (${res.status})`);
+  }
+  return payload as T;
+}
+```
+
+### 2. Sign-in: password, then two-factor
+
+`POST /api/auth/login` has two possible success shapes, so branch on `requires2FA`
+rather than on HTTP status alone.
+
+```ts
+export type NextStep = "register-business" | "complete-profile" | "dashboard";
+
+export interface AuthUser {
+  id: number;
+  name: string | null;
+  email: string;
+  phone: string | null;
+  businessId: string;
+  isInBusiness: boolean;
+  businessProfileId: number | null;
+  businessName: string | null;
+  role: "owner" | "admin" | "operator" | "viewer" | null;
+  permissions: string[];
+  twoFactorEnabled: boolean;
+  businessType: { id: number; name: string; slug: string } | null;
+}
+
+export type SignInResult =
+  | { status: "authenticated"; token: string; refreshToken: string; user: AuthUser; nextStep: NextStep }
+  | { status: "needs2FA"; challengeToken: string; maskedDestination: string; expiresIn: number };
+
+export async function signIn(identifier: string, password: string): Promise<SignInResult> {
+  const res = await fetch(`${API_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // identifier accepts a Business ID, an email, or a phone number
+    body: JSON.stringify({ identifier, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new ApiError(res.status, data.error);
+
+  if (data.requires2FA) {
+    return {
+      status: "needs2FA",
+      challengeToken: data.challengeToken,
+      maskedDestination: data.maskedDestination,
+      expiresIn: data.expiresIn, // seconds; the code lives 10 minutes
+    };
+  }
+  return {
+    status: "authenticated",
+    token: data.token,
+    refreshToken: data.refreshToken,
+    user: data.user,
+    nextStep: data.nextStep,
+  };
+}
+
+export async function verifyTwoFactor(challengeToken: string, code: string) {
+  const res = await fetch(`${API_URL}/api/auth/2fa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challengeToken, code }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new ApiError(res.status, data.error);
+  setSession({ token: data.token, refreshToken: data.refreshToken });
+  return { user: data.user as AuthUser, nextStep: data.nextStep as NextStep };
+}
+
+export async function resendTwoFactor(challengeToken: string) {
+  return api("/api/auth/2fa/resend", {
+    method: "POST",
+    body: { challengeToken },
+    auth: false,
+  });
+}
+```
+
+Signup and Google sign-in return the same `token` / `refreshToken` / `user` / `nextStep`
+payload, so they can call `setSession(...)` and then the same routing function below.
+Non-Google 2FA states to handle: `401` wrong code, `429` five failed attempts (restart
+login), `410` expired challenge, `502` the code email could not be delivered.
+
+### 3. Route the user with `nextStep`
+
+Every session-producing endpoint (`signup`, `login`, `2fa`, `google`, invitation
+accept) returns `nextStep`. Do not infer onboarding state from local flags.
+
+| `nextStep` | Meaning | Client route |
+| --- | --- | --- |
+| `register-business` | Account exists, no business yet | Business type + name form |
+| `complete-profile` | Business created, `missingFields` still empty-able | KYB details form |
+| `dashboard` | Fully onboarded | Dashboard |
+
+On app resume, call `GET /api/auth/me` and `GET /api/business/register`; the latter
+returns `{ registered, missingFields, nextStep }` and is the cheapest way to decide where
+to land without re-running login.
+
+```ts
+export async function resolveRoute() {
+  const status = await api<{ registered: boolean; missingFields: string[]; nextStep: NextStep }>(
+    "/api/business/register",
+  );
+  if (!status.registered) return "/onboarding/business";
+  if (status.missingFields.length) return "/onboarding/profile";
+  return "/dashboard";
+}
+```
+
+### 4. Which endpoints power which screen
+
+| Screen | Calls |
+| --- | --- |
+| Sign up | `POST /api/auth/signup`, then `GET /api/business-types` for the next form |
+| Login | `POST /api/auth/login` → `POST /api/auth/2fa` (or `POST /api/auth/2fa/resend`) |
+| App resume / gate | `GET /api/auth/me`, `GET /api/business/register` |
+| Business registration | `POST /api/business/register` |
+| Business details form | `GET /api/kyb`, `PUT /api/kyb/:id` |
+| Browse events (public) | `GET /api/catalog/events?country=&q=` |
+| Browse bus routes (public) | `GET /api/catalog/routes?origin=&destination=` |
+| Event detail / checkout | `GET /api/events/:id`, `POST /api/payments/simulate`, `POST /api/bookings` |
+| My tickets / trips | `GET /api/bookings`, `GET /api/bookings/:reference` |
+| Send a parcel | `POST /api/parcels`, then `GET /api/parcels/:reference/tracking` |
+| Track a parcel (public) | `GET /api/parcels/:reference/tracking` |
+| Operator dashboard | `GET /api/fleet`, `/api/schedules`, `/api/drivers`, `/api/assignments`, `/api/bus-bookings` |
+| Counter / POS | `POST /api/pos/tills`, `GET /api/pos/tills`, `POST /api/pos/transactions`, `PUT /api/pos/tills?id=` |
+| Scanner | `POST /api/validations` (replay offline scans with `synced: false` + `occurredAt`) |
+| Compliance | `GET`/`POST`/`PUT`/`DELETE /api/compliance` |
+| Finance | `GET /api/finance/settlements` |
+| Team settings | `POST`/`GET /api/team/roles`, `POST`/`GET /api/team/invitations` |
+| Invitation deep link | `GET /api/team/invitations/:token`, then `POST /api/team/invitations/:token` |
+| Audit trail | `GET /api/audit?businessProfileId=` |
+| Platform console | `/api/admin/*` (see [Platform administration](#platform-administration)) |
+
+### 5. Invitation deep links
+
+`GET /api/team/invitations/:token` is public, so the landing page can render the
+invitation before anyone signs in. `POST` with `{ password, phone? }` creates the
+member's credentials and returns a full session (the person lands signed in with their
+role); `POST` with no password requires the invitee's own bearer token. Both paths set
+`user.isInBusiness`, `user.businessProfileId`, `user.role`, and `user.permissions` the
+same way, so the client just calls `setSession(...)` and routes on `nextStep`.
+
+### 6. Error handling
+
+Every failure is `{ "error": "human readable message" }` with the status codes listed in
+[Common errors](#common-errors). The client rules that matter:
+
+- `401` on any protected call → refresh once (handled in `api()`); if that fails, clear
+  the session and return to the login screen.
+- `404` on an operator or team endpoint → the account has no business profile yet (or is
+  not the owner). Re-run `GET /api/business/register` and route to onboarding.
+- `409` → conflict the user can act on: duplicate signup, business already registered,
+  till already open, schedule sold out, team member already exists.
+- `410` / `429` / `502` on the 2FA endpoints → expired code, too many wrong codes, and
+  undelivered email respectively. Restart from `POST /api/auth/login`.
 
 ## Authentication
 
@@ -230,7 +589,7 @@ curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/refresh \
   -d '{"refreshToken":"<refresh-token>"}'
 ```
 
-Sessions expire after 24 hours. Refresh tokens are rotated and have their own expiry. A revoked or expired session returns `401 Unauthorized`.
+Sessions expire after 24 hours. Refresh tokens are rotated on every use and are valid for 7 days; always replace the stored refresh token with the returned one. A revoked or expired session returns `401 Unauthorized`. `POST /api/auth/refresh` needs no bearer token — the refresh token in the body is the credential.
 
 ### Log out
 
@@ -444,10 +803,41 @@ All authenticated endpoints use the same bearer token as the rest of the API.
 - `GET /api/parcels/:reference/tracking` — public tracking timeline (recipient names masked for
   non-owners).
 
+```bash
+# Create a customer booking (kind: bus | event | parcel)
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/bookings \
+  -H 'Authorization: Bearer <customer-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"bus","title":"Lilongwe to Blantyre","scheduledFor":"2026-09-25T06:00:00.000Z","amount":15000}'
+
+# Read it back by the generated LMT- reference (owner only)
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/bookings/LMT-BUS-8F3K2M \
+  -H 'Authorization: Bearer <customer-token>'
+
+# Send a parcel, then track it (tracking needs no token)
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/parcels \
+  -H 'Authorization: Bearer <operator-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"senderName":"Alice","recipientName":"Bob","origin":"Lilongwe","destination":"Blantyre","weightKg":5}'
+
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/parcels/LMT-PCL-7KD2QP/tracking
+```
+
+`GET /api/parcels/:reference/tracking` returns `reference`, `status`, `origin`,
+`destination`, `weightKg`, and a chronological `timeline` of scans. Sender/recipient names
+come back masked (`A***`) and `amount` is omitted for everyone except the owning profile,
+so the tracking screen works for anonymous customers without leaking PII.
+
 ### Operator operations (owned business profile)
 
 All operator endpoints resolve the caller's business profile automatically; a missing profile
 returns `404`.
+
+The CRUD resources below share one shape: `GET` to list, `POST` to create,
+`PUT ?id=<rowId>` to update (omitted fields are kept), `DELETE ?id=<rowId>` to remove, and
+a `404` when the row does not belong to the caller's business profile. `/api/validations`
+and `/api/pos/tills` are the two exceptions: neither is deletable, and a till is opened with
+`POST` and closed with `PUT ?id=`.
 
 - `/api/bus-bookings` — `GET` list, `POST` create ({scheduleId?, customerName, seats[], amount,
   channel `online|pos`, status `confirmed|checked-in|cancelled`}), `PUT ?id=`, `DELETE ?id=`.
@@ -501,6 +891,33 @@ audit log.
 - `/api/admin/roles` — `GET` roles with permission keys + the full permission list, `POST`
   create role ({name, scope `platform|operator|field`, permissions?}), `PUT ?name=<role>`
   replaces the role's permission set ({permissions: ["manage-commission", ...]}).
+
+```bash
+# KYC review queue, then approve
+curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/kyc \
+  -H 'Authorization: Bearer <platform-token>'
+
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/kyc \
+  -H 'Authorization: Bearer <platform-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"id":3,"status":"approved","riskTier":"low"}'
+
+# Suspend an operator, set the events commission rate, resolve a payment flag
+curl -X PATCH 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/operators?id=7' \
+  -H 'Authorization: Bearer <platform-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"accountStatus":"suspended"}'
+
+curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/commission \
+  -H 'Authorization: Bearer <platform-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"service":"events","rate":12.5}'
+
+curl -X PATCH 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/reconciliation?id=4' \
+  -H 'Authorization: Bearer <platform-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"auto-refunded"}'
+```
 
 ### KYB integration
 
