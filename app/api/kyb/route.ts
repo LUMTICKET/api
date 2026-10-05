@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { businessProfiles } from "@/drizzle/schema";
+import { businessProfiles, kycReviews, users } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
+import { isValidEmail } from "@/lib/auth";
+import { ensureAuthSchema } from "@/lib/ensure-auth-schema";
+import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { eq } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const user = await getCurrentUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // The kyc_reviews row created below needs the operational schema.
+    await ensureOperationalSchema();
 
     const body = await req.json();
 
@@ -17,6 +25,13 @@ export async function POST(req: NextRequest) {
     if (!body.businessName || !body.email || !body.phone || !body.address || !body.city || !body.country) {
       return NextResponse.json(
         { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidEmail(body.email)) {
+      return NextResponse.json(
+        { error: "Enter a valid email address" },
         { status: 400 }
       );
     }
@@ -39,6 +54,7 @@ export async function POST(req: NextRequest) {
       .insert(businessProfiles)
       .values({
         userId: user.id,
+        businessTypeId: user.businessTypeId ?? null,
         type: body.type || "individual",
         businessName: body.businessName,
         tradingName: body.tradingName || null,
@@ -58,7 +74,24 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    return NextResponse.json(profile, { status: 201 });
+    // Seed a pending KYC review so the platform review queue picks up new
+    // businesses immediately.
+    const [kycReview] = await db
+      .insert(kycReviews)
+      .values({ businessProfileId: profile.id, status: "pending", riskTier: "low" })
+      .returning();
+
+    // Link the account to the business it just created.
+    await db
+      .update(users)
+      .set({
+        isInBusiness: true,
+        businessProfileId: profile.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
+
+    return NextResponse.json({ ...profile, kycReview }, { status: 201 });
   } catch (err) {
     console.error("KYB create error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
@@ -68,6 +101,8 @@ export async function POST(req: NextRequest) {
 /** Get current user's own business profile */
 export async function GET(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const user = await getCurrentUser(req);
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
