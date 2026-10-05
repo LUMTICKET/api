@@ -6,7 +6,7 @@ Next.js App Router API for authentication, business verification profiles, team 
 
 - Node.js 20 or newer
 - PostgreSQL database
-- SMTP account for sending team invitations
+- SMTP account for sending team invitations and two-factor login codes
 
 ## Setup
 
@@ -45,7 +45,7 @@ npx drizzle-kit push
 
 ### Business types
 
-`GET /api/business-types` is a public endpoint that lists the business types available for selection during signup and first-time Google sign-in. The `business_types` table is seeded by default with Event Organizer, Bus Operator, Airline / Flight Operator, and Tourism / Tour Operator.
+`GET /api/business-types` is a public endpoint that lists the business types available for selection during **business registration** (the step after login credentials are created). The `business_types` table is seeded by default with Event Organizer, Bus Operator, Airline / Flight Operator, and Tourism / Tour Operator.
 
 ```bash
 curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/business-types
@@ -63,23 +63,28 @@ Response shape:
 
 `businessType` values are accepted as an id (`1`), a slug (`"event-organizer"`), or a name (`"Event Organizer"`). Pass `?includeInactive=1` to include disabled types.
 
-### Sign up
+### Sign up (login credentials only)
 
-`POST /api/auth/signup` creates a user and a database-backed session. The signup form accepts a full name, country, email or mobile identifier, password, and the selected business type. The identifier is stored in the user's existing `email` field.
+`POST /api/auth/signup` creates the **login credentials only**: full name, a validated email address, an optional phone number, and a password. The business is *not* created here — business type selection happens in the next step (see [Register the business](#register-the-business-minimal-first-form)), so a long form never blocks account creation.
+
+- `email` is required and must be a valid address (`400 "Enter a valid email address"` otherwise).
+- `phone` is optional but must be a valid number when supplied; it becomes a login identifier alongside email and Business ID.
+- `password` must be at least 8 characters.
+- Every new account is issued a unique **Business ID** (`businessId`, e.g. `LMT-8F3K2QZ4`), another way to log in.
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
   -H 'Content-Type: application/json' \
-  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW","businessType":"event-organizer"}'
+  -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW","phone":"+260991234567"}'
 ```
 
-Supported signup country codes are `MW` (Malawi), `ZM` (Zambia), `ZW` (Zimbabwe), `MZ` (Mozambique), `TZ` (Tanzania), `ZA` (South Africa), `BW` (Botswana), and `NA` (Namibia). The `country` field is optional for existing clients and is persisted on the user record when supplied.
+Supported signup country codes are `MW` (Malawi), `ZM` (Zambia), `ZW` (Zimbabwe), `MZ` (Mozambique), `TZ` (Tanzania), `ZA` (South Africa), `BW` (Botswana), and `NA` (Namibia). The `country` field is optional and is persisted on the user record when supplied.
 
-The `businessType` field is required and must match one of the seeded types from `GET /api/business-types`. It is stored on the user record via `business_type_id`.
+The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, `refreshExpiresAt`, a `user` object (with `businessId`, `isInBusiness: false`, `role: null`) and `nextStep: "register-business"`, which tells the client to open the business registration form.
 
-The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, `refreshExpiresAt`, and a `user` object containing the selected `businessType`.
+`businessType` is still accepted for legacy clients but is optional: it only stores a preference on the user record and never creates the business.
 
-To change the business type later, call `PATCH /api/auth/signup` with a bearer token:
+To change the stored business type later, call `PATCH /api/auth/signup` with a bearer token:
 
 ```bash
 curl -X PATCH https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
@@ -88,27 +93,87 @@ curl -X PATCH https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
   -d '{"businessType":"bus-operator"}'
 ```
 
+### Register the business (minimal first form)
+
+Business registration is a **separate step that runs after the login credentials exist**. The first form is deliberately minimal so users are not discouraged during onboarding; everything else is completed later from the dashboard.
+
+`POST /api/business/register` requires only `businessType` and `businessName`:
+
+```bash
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/business/register \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"businessType":"event-organizer","businessName":"Lum Events"}'
+```
+
+Optional on this form: `type` (`individual` or `company`), `country`, `phone`, and `email` — the contact fields default to the owner's own account details when omitted.
+
+On `201` the business profile is created with the KYB detail fields still empty, a pending `kyc_reviews` row is queued, and the account is linked to the business (`user.isInBusiness = true`, `user.businessProfileId = <profile id>`, `user.businessTypeId` set). The response contains the profile, `missingFields`, `nextStep: "complete-profile"`, and the updated `user`.
+
+`GET /api/business/register` reports registration status so the dashboard can route the account:
+
+- `{ "registered": false, "nextStep": "register-business" }`
+- `{ "registered": true, "missingFields": ["address", ...], "nextStep": "complete-profile" }`
+- `{ "registered": true, "missingFields": [], "nextStep": "dashboard" }`
+
+The remaining business profile details are completed from the dashboard with the existing `PUT /api/kyb/:id`, which accepts any subset of `phone`, `address`, `city`, `country`, `website`, `description`, `executives`, `documents`, and keeps omitted fields unchanged. Registering twice returns `409` (with the existing `businessProfileId`).
+
 ### Log in
 
-`POST /api/auth/login` accepts the same email and password and returns a new session. The response's `user` object includes the stored `businessType`.
+`POST /api/auth/login` accepts **a single identifier that can be a Business ID, an email address, or a phone number**, plus the password. `identifier` is the preferred key; the aliases `email`, `phone`, and `businessId` also work and resolve identically.
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"owner@example.com","password":"Password123!"}'
+  -d '{"identifier":"owner@example.com","password":"Password123!"}'
+
+# or: {"identifier":"LMT-8F3K2QZ4","password":"Password123!"}
+# or: {"identifier":"+260991234567","password":"Password123!"}
 ```
+
+Two-factor authentication is enabled by default (`users.two_factor_enabled`), so a correct password alone does **not** create a session. Instead the response starts the second factor:
+
+```json
+{
+  "requires2FA": true,
+  "userId": 12,
+  "challengeToken": "9f2c…",
+  "channel": "email",
+  "delivery": "sent",
+  "expiresIn": 600,
+  "maskedDestination": "o***@example.com"
+}
+```
+
+Accounts with `twoFactorEnabled: false` skip the challenge and receive `token`, `refreshToken`, `sessionId`, `user`, and `nextStep` immediately. Unknown identifiers and wrong passwords both return `401 Invalid credentials`.
+
+### Two-factor verification
+
+`POST /api/auth/2fa` exchanges the 6-digit code emailed to the account address for the session:
+
+```bash
+curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/2fa \
+  -H 'Content-Type: application/json' \
+  -d '{"challengeToken":"<token-from-login>","code":"123456"}'
+```
+
+On success it returns the same payload as a direct login (`token`, `refreshToken`, `sessionId`, `expiresAt`, `refreshExpiresAt`, `user`, `nextStep`). An incorrect code returns `401`; after 5 failed attempts the challenge is invalidated and returns `429`; an expired challenge returns `410`. Codes live for 10 minutes.
+
+`POST /api/auth/2fa/resend` with `{ "challengeToken": "…" }` emails a fresh code and keeps the same token so the client does not need to restart the login.
+
+Google sign-in does not use this flow — Google enforces its own second factor.
 
 ### Continue with Google
 
-`POST /api/auth/google` accepts the Google `idToken` plus `email`, `name`, and `avatar`. On **first-time** Google sign-in (new account), the request must also include `businessType` — the selected business type is stored on the new user. For returning Google users the business type is already known, so `businessType` is optional; when supplied it updates the stored value.
+`POST /api/auth/google` accepts the Google `idToken` plus `email`, `name`, and `avatar`. The email is validated before the account is created. `businessType` is optional: the business is registered in its own step afterwards, exactly like a password account.
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/google \
   -H 'Content-Type: application/json' \
-  -d '{"idToken":"<google-id-token>","email":"owner@example.com","name":"Business Owner","businessType":"event-organizer"}'
+  -d '{"idToken":"<google-id-token>","email":"owner@example.com","name":"Business Owner"}'
 ```
 
-The response's `user` object always includes the linked `businessType`.
+New Google accounts return `nextStep: "register-business"` (or `"dashboard"` for returning users who already belong to a business) and `isNewAccount: true` on creation.
 
 For protected endpoints, send the access token as a bearer token:
 
@@ -118,12 +183,42 @@ Authorization: Bearer <token>
 
 ### Current user
 
-`GET /api/auth/me` returns the authenticated user, including the linked `businessType`.
+`GET /api/auth/me` returns the authenticated account together with its identity — login identifiers, business linkage, and the role it signs in with:
+
+```json
+{
+  "id": 12,
+  "email": "owner@example.com",
+  "phone": "+260991234567",
+  "businessId": "LMT-8F3K2QZ4",
+  "isInBusiness": true,
+  "businessProfileId": 1,
+  "businessName": "Lum Events",
+  "role": "owner",
+  "permissions": ["*"],
+  "twoFactorEnabled": true,
+  "businessType": { "id": 1, "name": "Event Organizer", "slug": "event-organizer" }
+}
+```
 
 ```bash
 curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/me \
   -H 'Authorization: Bearer <token>'
 ```
+
+### Login identity fields
+
+Every auth response's `user` object shares the same identity shape, backed by the `users` table columns added in `drizzle/migrations/0007_auth_identity_business_flow.sql`:
+
+| Field | Meaning |
+| --- | --- |
+| `businessId` | Unique per-account Business ID (e.g. `LMT-8F3K2QZ4`); a login identifier |
+| `phone` | Optional second login identifier |
+| `isInBusiness` | `true` once the account owns or has joined a business |
+| `businessProfileId` | Which business the account operates inside |
+| `role` | `owner`, or the invited team role (`admin` / `operator` / `viewer`) — `null` before a business exists |
+| `permissions` | `"*"` for owners, otherwise the custom `team_roles.permissions` of the member's role |
+| `twoFactorEnabled` | Whether password logins require the emailed second factor |
 
 ### Refresh a session
 
@@ -152,7 +247,7 @@ All KYB endpoints require authentication and are restricted to the current user'
 
 ### Create a profile
 
-`POST /api/kyb` requires `businessName`, `email`, `phone`, `address`, `city`, and `country`.
+`POST /api/kyb` is the full KYB form and requires `businessName`, `email`, `phone`, `address`, `city`, and `country` (`email` is validated). It is an alternative to the minimal `POST /api/business/register` flow: use it when the client collects everything in one shot. Either way the account is linked to the created business (`isInBusiness: true`, `businessProfileId`).
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
@@ -416,6 +511,14 @@ catalog fields `venue`, `city`, and `countryCode` used by the public events list
 ## Team roles
 
 Only the business profile owner can create or list roles.
+
+Team members sign in through the **same** `POST /api/auth/login` endpoint as
+the owner (with their Business ID, email, or phone, plus the two-factor code).
+After sign-in their `user.role` and `user.permissions` come from the
+`team_members` row created when the invitation was accepted, and
+`user.isInBusiness` / `user.businessProfileId` identify which business they
+operate inside.
+
 ### Create a role
 
 `POST /api/team/roles`:
@@ -462,7 +565,7 @@ curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations 
   }'
 ```
 
-The invitation is stored in the database before email delivery and the action is written to the audit log. A successful `201` response means the invitation record was created; check the server log if the SMTP provider rejects delivery.
+The invitation is stored in the database before email delivery and the action is written to the audit log. The `email` must be a valid address (`400` otherwise) because it becomes the invited person's login identifier. A successful `201` response means the invitation record was created; check the server log if the SMTP provider rejects delivery.
 
 ### List invitations
 
@@ -481,14 +584,38 @@ curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations?busines
 curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token>
 ```
 
-### Accept an invitation
+### Accept an invitation (creates the member's login credentials)
 
-The invited person must first sign up or log in, then call `POST /api/team/invitations/:token` with their access token. This creates a `teamMembers` record, marks the invitation as accepted, and creates an audit event.
+`POST /api/team/invitations/:token` can now mint credentials in the `users`
+table at approval time — the invited person does not need an account
+beforehand:
 
 ```bash
 curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token> \
-  -H 'Authorization: Bearer <invited-user-token>'
+  -H 'Content-Type: application/json' \
+  -d '{"password":"Password123!","phone":"+260991234567"}'
 ```
+
+No bearer token is required — the emailed token is the secret. On success
+(`201`) the endpoint:
+
+1. validates the invitation's email and creates the account in `users` with a
+   hashed password, a fresh Business ID, and an optional phone identifier;
+2. links the account to the business (`isInBusiness: true`,
+   `businessProfileId` set);
+3. records the `team_members` row carrying the invited `role` / `roleId` and
+   marks the invitation accepted;
+4. writes the audit event and returns a full session (`token`,
+   `refreshToken`, …) with `user.role` and `user.permissions`, so the new
+   member lands on the dashboard already signed in with their role.
+
+If an account with that email already exists, the endpoint returns `409` and
+the person can accept while signed in (legacy flow).
+
+Legacy flow: the invited person signs up or logs in first, then calls
+`POST /api/team/invitations/:token` with their access token and **no**
+`password` in the body. This also links their account to the business
+(`isInBusiness: true`, `businessProfileId`).
 
 An expired invitation returns `410`. A user who already belongs to a team returns `409`.
 
@@ -507,12 +634,14 @@ Audit records include the actor, business profile, affected resource, action, de
 
 | Status | Meaning |
 | --- | --- |
-| `400` | Required input is missing or invalid |
-| `401` | Access token is missing, invalid, expired, or revoked |
+| `400` | Required input is missing or invalid (including an invalid email) |
+| `401` | Access token or credentials are missing, invalid, expired, or revoked |
 | `404` | Resource does not exist or is not owned by the authenticated user |
 | `409` | Duplicate account or the user already belongs to a team |
-| `410` | Invitation has expired |
+| `410` | Invitation or two-factor challenge has expired |
+| `429` | Too many incorrect two-factor codes; start login again |
 | `500` | Unexpected server or database error |
+| `502` | The two-factor email could not be delivered (production) |
 
 ## Validation
 

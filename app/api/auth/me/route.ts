@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserById, validateSessionToken } from "@/lib/auth";
-import {
-  getBusinessTypeForUser,
-  serializeBusinessType,
-} from "@/lib/business-types";
+import { ensureAuthSchema } from "@/lib/ensure-auth-schema";
+import { buildAuthUser } from "@/lib/identity";
 
+/**
+ * GET /api/auth/me
+ *
+ * Returns the authenticated account: login identifiers (email, phone,
+ * Business ID), the business linkage (`isInBusiness` + which business) and
+ * the role/permissions the account signs in with.
+ */
 export async function GET(req: NextRequest) {
   try {
+    await ensureAuthSchema();
+
     const authHeader = req.headers.get("authorization");
     const token = authHeader?.replace("Bearer ", "");
 
@@ -25,15 +32,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const businessType = await getBusinessTypeForUser(user.id);
-
-    return NextResponse.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      avatar: user.avatar,
-      businessType: serializeBusinessType(businessType),
-    });
+    return NextResponse.json(await buildAuthUser(user));
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
