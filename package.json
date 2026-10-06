@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "drizzle-kit": "drizzle-kit generate:config && drizzle-kit generate:migration",
+    "drizzle-kit:push": "drizzle-kit push",
+    "drizzle-kit:pull": "drizzle-kit pull"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
