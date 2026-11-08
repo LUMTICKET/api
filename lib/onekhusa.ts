@@ -27,6 +27,49 @@ export class OneKhusaError extends Error {
   }
 }
 
+/** The reason from a OneKhusa RFC 7807 error body, or null when there is none. */
+export function errorDetail(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const { detail, errors, title } = body as { detail?: unknown; errors?: unknown; title?: unknown };
+  if (Array.isArray(errors) && errors.length > 0) return errors.map(String).join("; ");
+  if (typeof detail === "string" && detail) return detail;
+  if (typeof title === "string" && title) return title;
+  return null;
+}
+
+/** True when requests are going to the OneKhusa sandbox. */
+export function isSandbox(): boolean {
+  return (process.env.ONEKHUSA_BASE_URL ?? "").includes("/sandbox");
+}
+
+/**
+ * The only payer wallets the OneKhusa sandbox accepts (see its "Test Accounts"
+ * docs). Any other number is rejected with "… is not a correct test phone number".
+ */
+export const SANDBOX_TEST_WALLETS = { airtel: "221100000101", tnm: "231100000101" } as const;
+
+export function sandboxWalletHint(method: "tnm" | "airtel"): string {
+  const network = method === "tnm" ? "TNM Mpamba" : "Airtel Money";
+  return `OneKhusa's sandbox only accepts its test ${network} wallet ${SANDBOX_TEST_WALLETS[method]} (PIN 1234). Every other number is rejected by the sandbox.`;
+}
+
+/**
+ * Canonical payer MSISDN for OneKhusa push payments.
+ *
+ * OneKhusa documents the local Malawian format `0XXXXXXXXX`, but clients send
+ * "+265991234567", "265991234567", "00991234567" or "991234567". Normalise all
+ * of those to the same value and leave any other plausible wallet number (such
+ * as OneKhusa's 12-digit sandbox test wallets) untouched. Returns null when the
+ * value cannot be a mobile wallet number.
+ */
+export function normalizeMsisdn(phone: unknown): string | null {
+  const digits = String(phone ?? "").replace(/\D/g, "").replace(/^00/, "");
+  if (/^265[89]\d{8}$/.test(digits)) return `0${digits.slice(3)}`;
+  if (/^0[89]\d{8}$/.test(digits)) return digits;
+  if (/^[89]\d{8}$/.test(digits)) return `0${digits}`;
+  return /^\d{9,12}$/.test(digits) ? digits : null;
+}
+
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 // Tokens live 5 minutes; refresh 30s early.
@@ -93,7 +136,8 @@ export function initiateMobileMoneyPush(input: {
     {
       merchantAccountNumber: Number(env("ONEKHUSA_MERCHANT_ACCOUNT_NUMBER")),
       connectorId: input.connectorId,
-      payerAccountNumber: input.payerAccountNumber,
+      // Always send the canonical local format, whatever the caller passed.
+      payerAccountNumber: normalizeMsisdn(input.payerAccountNumber) ?? input.payerAccountNumber,
       sourceReferenceNumber: input.sourceReferenceNumber,
       transactionDescription: input.description,
       transactionAmount: input.amount,

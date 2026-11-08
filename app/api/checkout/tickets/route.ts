@@ -5,7 +5,16 @@ import { db } from "@/lib/db";
 import { events, payments, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
-import { connectorIdFor, initiateHostedCheckout, initiateMobileMoneyPush, OneKhusaError } from "@/lib/onekhusa";
+import {
+  connectorIdFor,
+  errorDetail,
+  initiateHostedCheckout,
+  initiateMobileMoneyPush,
+  isSandbox,
+  normalizeMsisdn,
+  OneKhusaError,
+  sandboxWalletHint,
+} from "@/lib/onekhusa";
 import type { PurchaseIntent } from "@/lib/purchase";
 
 const methods = ["card", "tnm", "airtel"] as const;
@@ -29,7 +38,7 @@ export async function POST(req: NextRequest) {
     const ticketTypeId = Number(body?.ticketTypeId);
     const quantity = Number(body?.quantity ?? 1);
     const method = body?.method;
-    const phone = String(body?.phone ?? "").replace(/\s/g, "");
+    const phone = normalizeMsisdn(body?.phone);
 
     if (!Number.isInteger(ticketTypeId) || ticketTypeId <= 0) {
       return NextResponse.json({ error: "ticketTypeId is required" }, { status: 400 });
@@ -40,7 +49,7 @@ export async function POST(req: NextRequest) {
     if (!methods.includes(method)) {
       return NextResponse.json({ error: "method must be card, tnm, or airtel" }, { status: 400 });
     }
-    if (method !== "card" && !/^(\+?265|0)?[89]\d{8}$/.test(phone)) {
+    if (method !== "card" && !phone) {
       return NextResponse.json({ error: "A valid mobile money phone number is required" }, { status: 400 });
     }
 
@@ -108,7 +117,7 @@ export async function POST(req: NextRequest) {
       }
       const r = await initiateMobileMoneyPush({
         connectorId: connectorIdFor(method),
-        payerAccountNumber: phone,
+        payerAccountNumber: phone as string,
         sourceReferenceNumber: reference,
         description: narrative,
         amount,
@@ -126,6 +135,24 @@ export async function POST(req: NextRequest) {
         .update(payments)
         .set({ status: "failed", metadata: { intent, initiationError: err instanceof OneKhusaError ? err.body : String(err) }, updatedAt: new Date() })
         .where(eq(payments.id, payment.id));
+      // A 4xx from OneKhusa is a validation problem with this request (bad payer
+      // wallet, unknown connector, amount out of range). Surface its reason so
+      // the buyer is not stuck with an opaque 502.
+      if (err instanceof OneKhusaError && err.status >= 400 && err.status < 500) {
+        const detail = errorDetail(err.body);
+        console.error("OneKhusa rejected ticket payment:", err.status, err.body);
+        return NextResponse.json(
+          {
+            error: detail ?? "OneKhusa rejected the payment request",
+            paymentId: payment.id,
+            providerStatus: err.status,
+            ...(isSandbox() && method !== "card" && /phone|payer|msisdn|wallet/i.test(detail ?? "")
+              ? { hint: sandboxWalletHint(method) }
+              : {}),
+          },
+          { status: 400 },
+        );
+      }
       console.error("Ticket checkout initiation error:", err);
       return NextResponse.json({ error: "Could not start the payment. Please try again.", paymentId: payment.id }, { status: 502 });
     }

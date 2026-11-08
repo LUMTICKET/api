@@ -703,6 +703,17 @@ ONEKHUSA_FAILURE_URL=                        # required only for card hosted che
 
 For TNM and Airtel Money, configure the sandbox API credentials, merchant account, operator email, and the matching numeric connector IDs from OneKhusa's **Get All Connectors** API. Connector IDs must belong to the same environment as `ONEKHUSA_BASE_URL`. The success and failure redirect URLs are only used by card hosted checkout.
 
+### Sandbox test wallets
+
+The OneKhusa sandbox accepts **only** these predefined payer wallets, whatever number the caller sends:
+
+| Provider | Phone number | Authorization PIN |
+| --- | --- | --- |
+| Airtel Money | `221100000101` | `1234` |
+| TNM Mpamba | `231100000101` | `1234` |
+
+Any other number is rejected by the sandbox with `400 E900 … is not a correct test phone number`, regardless of how well-formed it looks — `0999000000` in OneKhusa's documentation is only an illustrative example. To complete a sandbox payment, initiate the push with the test wallet above, then go to the OneKhusa portal → **Test Your Integration → Simulate Push Payment**, open the pending transaction, and authorize it with the PIN to fire the `pushpayment.success` webhook. A live (`/live/v1`) environment has no such restriction.
+
 In the OneKhusa portal (Developers -> Webhooks), register this webhook URL for each of `pushpayment.success`, `pushpayment.failed` and `pushpayment.reversed`:
 
 ```
@@ -765,7 +776,7 @@ const payment = await apiRequest<{
   amount: fee.amount,
   currency: fee.currency,
   method: "tnm", // "airtel" or "card" are also supported
-  phone: "0999000000", // required for tnm/airtel; omit for card
+  phone: "0991234567", // required for tnm/airtel; omit for card
 });
 
 if (payment.checkoutUrl) { // In a browser; in Expo, open the URL with expo-linking.
@@ -780,14 +791,14 @@ if (payment.checkoutUrl) { // In a browser; in Expo, open the URL with expo-link
 
 #### Buy event tickets
 
-Customer ticket checkout uses `POST /api/checkout/tickets` rather than the business publishing endpoint. The API calculates the amount from the selected ticket type; do not send or trust a client-calculated amount. Send `{ "ticketTypeId": 123, "quantity": 2, "method": "tnm", "phone": "0999000000" }` with the customer's bearer token. `phone` is required for `tnm`/`airtel` and not needed for `card`. A `201` response starts a pending payment; for card it includes `checkoutUrl`. Poll the authenticated `GET /api/checkout/tickets/<paymentId>` endpoint. The booking is created only after the verified success webhook; the status endpoint returns the booking when issuance succeeds.
+Customer ticket checkout uses `POST /api/checkout/tickets` rather than the business publishing endpoint. The API calculates the amount from the selected ticket type; do not send or trust a client-calculated amount. Send `{ "ticketTypeId": 123, "quantity": 2, "method": "tnm", "phone": "0991234567" }` with the customer's bearer token. `phone` is required for `tnm`/`airtel` and not needed for `card`. A `201` response starts a pending payment; for card it includes `checkoutUrl`. Poll the authenticated `GET /api/checkout/tickets/<paymentId>` endpoint. The booking is created only after the verified success webhook; the status endpoint returns the booking when issuance succeeds.
 
 #### Errors and deployment checks
 
 - `401` means the access token is missing or invalid; sign in or refresh the session.
-- `400` means a required field, payment method, currency, or mobile number is invalid.
+- `400` means a required field, payment method, currency, or mobile number is invalid. OneKhusa rejecting the request is also reported as `400`; the response's `error` is OneKhusa's own reason (for example a sandbox wallet that is not one of the test wallets), plus a `hint` while `ONEKHUSA_BASE_URL` points at the sandbox.
 - `404` for publishing payments can mean the profile doesn't belong to the signed-in user.
-- `502` means the API could not initiate payment with OneKhusa. Check the Vercel **API project** function logs for `OneKhusa initiation error` (or `Ticket checkout initiation error`) and confirm the API deployment has valid credentials, the correct environment-specific connector ID, and the same sandbox/live environment as `ONEKHUSA_BASE_URL`. The browser's generic error does not include OneKhusa's rejection details.
+- `502` means OneKhusa could not be reached or failed on its side (credentials, connector ID, or a mismatch between the connector and `ONEKHUSA_BASE_URL`). Check the Vercel **API project** function logs for `OneKhusa initiation error` (or `Ticket checkout initiation error`). OneKhusa's own validation rejections are returned as `400` with its detail, not as `502`.
 
 Do not automatically retry a `502` without checking the failed attempt: every new POST creates a new payment record and a fresh provider reference. The webhook endpoint is `https://api.lumticket.com/api/payments/onekhusa/webhook`; it is server-to-server and must not be called by the frontend.
 
