@@ -23,14 +23,14 @@ npm install
 npm run dev
 ```
 
-The deployed API base URL is `https://api-gamma-mocha-qn31xem8po.vercel.app`.
+The production API base URL is `https://api.lumticket.com`.
 
 For local development, the API still runs at `http://localhost:3000` by default. Set `APP_URL` to the public API or web URL used in invitation links when deploying.
 
 ```env
 DATABASE_URL="postgresql://user:password@host:5432/database?sslmode=require"
 JWT_SECRET="replace-with-a-long-random-secret"
-APP_URL="https://api-gamma-mocha-qn31xem8po.vercel.app"
+APP_URL="https://business.lumticket.com"
 
 # Gmail SMTP example. Use a Google App Password, not your normal password.
 SMTP_HOST=smtp.gmail.com
@@ -49,15 +49,16 @@ npx drizzle-kit push
 
 ## Frontend quick start
 
-- **Base URL (production):** `https://api-gamma-mocha-qn31xem8po.vercel.app`
+- **Base URL (production):** `https://api.lumticket.com`
 - **Base URL (local API):** `http://localhost:3000`
 - **Transport:** JSON request and response bodies. Send `Content-Type: application/json`
   with any request that has a body.
 - **Auth:** every protected route expects `Authorization: Bearer <access token>`.
-- **CORS:** `middleware.ts` allows `https://lumticket.vercel.app`,
-  `https://lumiticketui.vercel.app`, `https://luticketnewui.vercel.app`,
-  `http://localhost:8081` (Expo), `http://localhost:19006`, and any
-  `https://localhost*` origin. Add your web client's origin there before shipping it.
+- **CORS:** `middleware.ts` allows `https://business.lumticket.com`,
+  `https://lumticket.com`, `https://lumiticketui.vercel.app`,
+  `https://luticketnewui.vercel.app`, `http://localhost:8081` (Expo),
+  `http://localhost:19006`, and any `https://localhost*` origin. Add your web client's
+  origin there before shipping it.
 - **Sessions:** access tokens last 24 hours, refresh tokens 7 days and are rotated on
   every use.
 - **Money:** every `amount` is an integer in minor units and defaults to `MWK` unless a
@@ -178,7 +179,7 @@ Copy this into the Expo/web client (`lib/api.ts`). It attaches the bearer token,
 refreshes once on `401`, and clears the session when refresh fails.
 
 ```ts
-export const API_URL = "https://api-gamma-mocha-qn31xem8po.vercel.app";
+export const API_URL = "https://api.lumticket.com";
 // local API: "http://localhost:3000"
 
 export type Tokens = { token: string; refreshToken: string };
@@ -408,7 +409,7 @@ Every failure is `{ "error": "human readable message" }` with the status codes l
 `GET /api/business-types` is a public endpoint that lists the business types available for selection during **business registration** (the step after login credentials are created). The `business_types` table is seeded by default with Event Organizer, Bus Operator, Airline / Flight Operator, and Tourism / Tour Operator.
 
 ```bash
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/business-types
+curl https://api.lumticket.com/api/business-types
 ```
 
 Response shape:
@@ -433,7 +434,7 @@ Response shape:
 - Every new account is issued a unique **Business ID** (`businessId`, e.g. `LMT-8F3K2QZ4`), another way to log in.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
+curl -X POST https://api.lumticket.com/api/auth/signup \
   -H 'Content-Type: application/json' \
   -d '{"email":"owner@example.com","password":"Password123!","name":"Business Owner","country":"MW","phone":"+260991234567"}'
 ```
@@ -447,7 +448,7 @@ The response includes `token`, `refreshToken`, `sessionId`, `expiresAt`, `refres
 To change the stored business type later, call `PATCH /api/auth/signup` with a bearer token:
 
 ```bash
-curl -X PATCH https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/signup \
+curl -X PATCH https://api.lumticket.com/api/auth/signup \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"businessType":"bus-operator"}'
@@ -460,7 +461,7 @@ Business registration is a **separate step that runs after the login credentials
 `POST /api/business/register` requires only `businessType` and `businessName`:
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/business/register \
+curl -X POST https://api.lumticket.com/api/business/register \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"businessType":"event-organizer","businessName":"Lum Events"}'
@@ -483,7 +484,7 @@ The remaining business profile details are completed from the dashboard with the
 `POST /api/auth/login` accepts **a single identifier that can be a Business ID, an email address, or a phone number**, plus the password. `identifier` is the preferred key; the aliases `email`, `phone`, and `businessId` also work and resolve identically.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/login \
+curl -X POST https://api.lumticket.com/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"identifier":"owner@example.com","password":"Password123!"}'
 
@@ -512,7 +513,7 @@ Accounts with `twoFactorEnabled: false` skip the challenge and receive `token`, 
 `POST /api/auth/2fa` exchanges the 6-digit code emailed to the account address for the session:
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/2fa \
+curl -X POST https://api.lumticket.com/api/auth/2fa \
   -H 'Content-Type: application/json' \
   -d '{"challengeToken":"<token-from-login>","code":"123456"}'
 ```
@@ -528,7 +529,7 @@ Google sign-in does not use this flow — Google enforces its own second factor.
 `POST /api/auth/google` accepts the Google `idToken` plus `email`, `name`, and `avatar`. The email is validated before the account is created. `businessType` is optional: the business is registered in its own step afterwards, exactly like a password account.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/google \
+curl -X POST https://api.lumticket.com/api/auth/google \
   -H 'Content-Type: application/json' \
   -d '{"idToken":"<google-id-token>","email":"owner@example.com","name":"Business Owner"}'
 ```
@@ -562,7 +563,7 @@ Authorization: Bearer <token>
 ```
 
 ```bash
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/me \
+curl https://api.lumticket.com/api/auth/me \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -585,7 +586,7 @@ Every auth response's `user` object shares the same identity shape, backed by th
 `POST /api/auth/refresh` rotates the refresh token and returns a new access token. Replace the stored refresh token with the returned one.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/refresh \
+curl -X POST https://api.lumticket.com/api/auth/refresh \
   -H 'Content-Type: application/json' \
   -d '{"refreshToken":"<refresh-token>"}'
 ```
@@ -597,7 +598,7 @@ Sessions expire after 24 hours. Refresh tokens are rotated on every use and are 
 `POST /api/auth/logout` revokes the current database session.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/auth/logout \
+curl -X POST https://api.lumticket.com/api/auth/logout \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -610,7 +611,7 @@ All KYB endpoints require authentication and are restricted to the current user'
 `POST /api/kyb` is the full KYB form and requires `businessName`, `email`, `phone`, `address`, `city`, and `country` (`email` is validated). It is an alternative to the minimal `POST /api/business/register` flow: use it when the client collects everything in one shot. Either way the account is linked to the created business (`isInBusiness: true`, `businessProfileId`).
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
+curl -X POST https://api.lumticket.com/api/kyb \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -633,7 +634,7 @@ The response contains the profile `id`. Save it as `businessProfileId` for team 
 `GET /api/kyb` returns the authenticated user's profile.
 
 ```bash
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
+curl https://api.lumticket.com/api/kyb \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -642,7 +643,7 @@ curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb \
 Use `GET`, `PUT`, or `DELETE /api/kyb/:id`. `PUT` accepts any profile fields and keeps omitted fields unchanged.
 
 ```bash
-curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb/<business-profile-id> \
+curl -X PUT https://api.lumticket.com/api/kyb/<business-profile-id> \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"description":"Updated business description"}'
@@ -708,32 +709,94 @@ In the OneKhusa portal (Developers -> Webhooks), register this webhook URL for e
 https://api.lumticket.com/api/payments/onekhusa/webhook
 ```
 
-Copy each event's signing secret into its corresponding `ONEKHUSA_WEBHOOK_SECRET_*` variable. The secrets must match exactly; the handler verifies HMAC-SHA512 signatures over the raw request body. All three events must be subscribed for OneKhusa payment initiation to work. Set these variables in the deployed API's environment as well as local development, then redeploy/restart the API.
+Copy each event's signing secret into its corresponding `ONEKHUSA_WEBHOOK_SECRET_*` variable. The secrets must match exactly; the handler verifies HMAC-SHA512 signatures over the raw request body. Subscribe to all three events so successful, failed, and reversed payments are reflected in Lumticket. These webhook settings are used by the API, not by the frontend. Set the variables in the deployed API's environment, then redeploy/restart the API.
 
-### Start the event publishing payment
+### Frontend integration with `api.lumticket.com`
 
-`POST /api/payments/onekhusa` creates a `pending` payment and calls OneKhusa. Amounts are whole MWK.
+The web or Expo client calls Lumticket's API over HTTPS. Configure the **frontend** with the public API origin:
 
-```bash
-# Mobile money: customer gets a USSD/STK PIN prompt on `phone`
-curl -X POST https://api.lumticket.com/api/payments/onekhusa \
-  -H 'Authorization: Bearer <owner-token>' -H 'Content-Type: application/json' \
-  -d '{"businessProfileId":1,"amount":10000,"method":"tnm","phone":"0999000000"}'
-
-# Card: response contains checkoutUrl (valid 10 min), redirect the customer there
-curl -X POST https://api.lumticket.com/api/payments/onekhusa \
-  -H 'Authorization: Bearer <owner-token>' -H 'Content-Type: application/json' \
-  -d '{"businessProfileId":1,"amount":10000,"method":"card"}'
+```env
+NEXT_PUBLIC_API_URL=https://api.lumticket.com
 ```
 
-The payment only becomes `succeeded` when the signed `pushpayment.success` webhook arrives. Poll `GET /api/payments/onekhusa?businessProfileId=1&paymentId=<id>` until `status` is `succeeded` or `failed`, then use `paymentId` below.
+For a frontend that does not use Next.js environment variables, set the same value in its runtime configuration. The API's Vercel project separately needs the `ONEKHUSA_*` variables above. Never put OneKhusa API keys, API secrets, or webhook secrets in frontend environment variables or browser code. Adding a variable in Vercel only affects new deployments, so redeploy after changing API settings.
+
+Protected API calls use the signed-in user's access token:
+
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api.lumticket.com";
+
+async function apiRequest<T>(path: string, token: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error ?? `API request failed (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+```
+
+#### Pay the business listing/publishing fee
+
+1. Load the current fee from the public `GET /api/payments/publishing-fee`; it returns `{ "amount": 10000, "currency": "MWK" }` by default. The API owner can change the default with `PUBLISHING_FEE_MWK`. Use this returned amount rather than hardcoding a different price.
+2. With the signed-in business owner's bearer token and their `businessProfileId`, call `POST /api/payments/onekhusa`. Amounts are whole MWK. For `tnm` or `airtel`, include the payer's phone number; for `card`, the API responds with a hosted checkout URL.
+
+```ts
+const fee = await fetch(`${API_URL}/api/payments/publishing-fee`).then(async (response) => {
+  if (!response.ok) throw new Error("Could not load the publishing fee");
+  return response.json() as Promise<{ amount: number; currency: string }>;
+});
+
+const payment = await apiRequest<{
+  id: number;
+  status: "pending";
+  checkoutUrl?: string;
+  amountToPay?: number;
+  totalCharges?: number;
+}>("/api/payments/onekhusa", token, {
+  businessProfileId,
+  amount: fee.amount,
+  currency: fee.currency,
+  method: "tnm", // "airtel" or "card" are also supported
+  phone: "0999000000", // required for tnm/airtel; omit for card
+});
+
+if (payment.checkoutUrl) { // In a browser; in Expo, open the URL with expo-linking.
+  window.location.assign(payment.checkoutUrl);
+}
+```
+
+`POST /api/payments/onekhusa` returns HTTP `201` when the provider accepts the initiation. A mobile-money payment is still `pending` while the customer approves the prompt; a card response includes `checkoutUrl` for hosted checkout. For publishing, use the returned payment `id` as the `paymentId` when creating the event.
+
+3. Poll the authenticated `GET /api/payments/onekhusa?businessProfileId=<id>&paymentId=<payment-id>` endpoint while the payment is pending. The server changes payment status only after it receives and verifies the OneKhusa webhook. Continue only when status is `succeeded`; stop and show an appropriate error for `failed` or `reversed`. A browser redirect or the initial `201` is not proof of payment.
+4. Call `POST /api/events` with the `paymentId` and event details. The event API verifies that the payment succeeded, belongs to the current user and business profile, and meets the publishing-fee requirement.
+
+#### Buy event tickets
+
+Customer ticket checkout uses `POST /api/checkout/tickets` rather than the business publishing endpoint. The API calculates the amount from the selected ticket type; do not send or trust a client-calculated amount. Send `{ "ticketTypeId": 123, "quantity": 2, "method": "tnm", "phone": "0999000000" }` with the customer's bearer token. `phone` is required for `tnm`/`airtel` and not needed for `card`. A `201` response starts a pending payment; for card it includes `checkoutUrl`. Poll the authenticated `GET /api/checkout/tickets/<paymentId>` endpoint. The booking is created only after the verified success webhook; the status endpoint returns the booking when issuance succeeds.
+
+#### Errors and deployment checks
+
+- `401` means the access token is missing or invalid; sign in or refresh the session.
+- `400` means a required field, payment method, currency, or mobile number is invalid.
+- `404` for publishing payments can mean the profile doesn't belong to the signed-in user.
+- `502` means the API could not initiate payment with OneKhusa. Check the Vercel **API project** function logs for `OneKhusa initiation error` (or `Ticket checkout initiation error`) and confirm the API deployment has valid credentials, the correct environment-specific connector ID, and the same sandbox/live environment as `ONEKHUSA_BASE_URL`. The browser's generic error does not include OneKhusa's rejection details.
+
+Do not automatically retry a `502` without checking the failed attempt: every new POST creates a new payment record and a fresh provider reference. The webhook endpoint is `https://api.lumticket.com/api/payments/onekhusa/webhook`; it is server-to-server and must not be called by the frontend.
 
 ### Create an event and ticket types
 
 `POST /api/events` requires the business profile owner and a successful `paymentId`. Supported categories are `event`, `bus`, `flight`, and `tourism`. The API accepts `tickets`; the Expo form uses `tiers`, which must be mapped before sending.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/events \
+curl -X POST https://api.lumticket.com/api/events \
   -H 'Authorization: Bearer <owner-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -762,7 +825,7 @@ The API creates the event and all ticket types in one transaction. Each ticket t
 `GET /api/events/:id` returns an event and its ticket types. `PUT /api/events/:id` allows the business owner or an accepted team member with the `admin` role to edit the event. Send only the fields that should change. Include `tickets` or `tiers` when replacing all ticket types; omitted ticket arrays leave existing ticket types unchanged.
 
 ```bash
-curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/events/1 \
+curl -X PUT https://api.lumticket.com/api/events/1 \
   -H 'Authorization: Bearer <owner-or-admin-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -783,57 +846,16 @@ The update is transactional: event changes and ticket replacement either both su
 ### List events and payments
 
 ```bash
-curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/events?businessProfileId=1' \
+curl 'https://api.lumticket.com/api/events?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 
 curl 'https://api.lumticket.com/api/payments/onekhusa?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
-### Expo integration sequence
+### Event publishing client checklist
 
-After the owner submits the create form:
-
-1. Call `POST /api/payments/onekhusa` with the selected method (plus `phone` for tnm/airtel; open `checkoutUrl` for card).
-2. Poll the payment `id` until `status` is `succeeded`.
-3. Call `POST /api/events` with that `paymentId` and map each Expo tier to a ticket: `name`, numeric `price`, `currency`, `perks` array, and numeric `capacity` from `remaining`.
-4. Show the success screen only after the event request returns `201`.
-
-Example client helper:
-
-```ts
-const API_URL = "https://api.lumticket.com";
-
-async function publishEvent(token: string, businessProfileId: number, payload: any, method: "card" | "tnm" | "airtel") {
-  const paymentResponse = await fetch(`${API_URL}/api/payments/onekhusa`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ businessProfileId, amount: 10000, currency: "MWK", method }),
-  });
-  if (!paymentResponse.ok) throw new Error("Payment failed to start");
-  const payment = await paymentResponse.json();
-
-  const eventResponse = await fetch(`${API_URL}/api/events`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...payload,
-      businessProfileId,
-      paymentId: payment.id,
-      startsAt: payload.date,
-      tickets: payload.tiers.map((tier: { name: string; price: string; currency?: string; perks: string; remaining: string }) => ({
-        name: tier.name,
-        price: Number(tier.price),
-        currency: tier.currency || "MWK",
-        perks: tier.perks.split(",").map((perk) => perk.trim()).filter(Boolean),
-        capacity: Number(tier.remaining),
-      })),
-    }),
-  });
-  if (!eventResponse.ok) throw new Error("Event creation failed");
-  return eventResponse.json();
-}
-```
+After the payment status becomes `succeeded`, send `POST /api/events` with the returned payment `id` as `paymentId`. Map each form tier to a ticket with `name`, numeric `price`, `currency`, `perks` array, and numeric `capacity`. Show the event-published confirmation only after the API returns `201`.
 
 ## Operational API (catalog, bookings, fleet, POS, finance, admin)
 
@@ -864,22 +886,22 @@ All authenticated endpoints use the same bearer token as the rest of the API.
 
 ```bash
 # Create a customer booking (kind: bus | event | parcel)
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/bookings \
+curl -X POST https://api.lumticket.com/api/bookings \
   -H 'Authorization: Bearer <customer-token>' \
   -H 'Content-Type: application/json' \
   -d '{"kind":"bus","title":"Lilongwe to Blantyre","scheduledFor":"2026-09-25T06:00:00.000Z","amount":15000}'
 
 # Read it back by the generated LMT- reference (owner only)
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/bookings/LMT-BUS-8F3K2M \
+curl https://api.lumticket.com/api/bookings/LMT-BUS-8F3K2M \
   -H 'Authorization: Bearer <customer-token>'
 
 # Send a parcel, then track it (tracking needs no token)
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/parcels \
+curl -X POST https://api.lumticket.com/api/parcels \
   -H 'Authorization: Bearer <operator-token>' \
   -H 'Content-Type: application/json' \
   -d '{"senderName":"Alice","recipientName":"Bob","origin":"Lilongwe","destination":"Blantyre","weightKg":5}'
 
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/parcels/LMT-PCL-7KD2QP/tracking
+curl https://api.lumticket.com/api/parcels/LMT-PCL-7KD2QP/tracking
 ```
 
 `GET /api/parcels/:reference/tracking` returns `reference`, `status`, `origin`,
@@ -953,26 +975,26 @@ audit log.
 
 ```bash
 # KYC review queue, then approve
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/kyc \
+curl https://api.lumticket.com/api/admin/kyc \
   -H 'Authorization: Bearer <platform-token>'
 
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/kyc \
+curl -X POST https://api.lumticket.com/api/admin/kyc \
   -H 'Authorization: Bearer <platform-token>' \
   -H 'Content-Type: application/json' \
   -d '{"id":3,"status":"approved","riskTier":"low"}'
 
 # Suspend an operator, set the events commission rate, resolve a payment flag
-curl -X PATCH 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/operators?id=7' \
+curl -X PATCH 'https://api.lumticket.com/api/admin/operators?id=7' \
   -H 'Authorization: Bearer <platform-token>' \
   -H 'Content-Type: application/json' \
   -d '{"accountStatus":"suspended"}'
 
-curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/commission \
+curl -X PUT https://api.lumticket.com/api/admin/commission \
   -H 'Authorization: Bearer <platform-token>' \
   -H 'Content-Type: application/json' \
   -d '{"service":"events","rate":12.5}'
 
-curl -X PATCH 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/admin/reconciliation?id=4' \
+curl -X PATCH 'https://api.lumticket.com/api/admin/reconciliation?id=4' \
   -H 'Authorization: Bearer <platform-token>' \
   -H 'Content-Type: application/json' \
   -d '{"status":"auto-refunded"}'
@@ -1000,7 +1022,7 @@ operate inside.
 `POST /api/team/roles`:
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/roles \
+curl -X POST https://api.lumticket.com/api/team/roles \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -1018,7 +1040,7 @@ The response contains the role `id`, which can be supplied as `roleId` when crea
 `GET /api/team/roles?businessProfileId=<id>` returns roles for the owned business profile.
 
 ```bash
-curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/roles?businessProfileId=1' \
+curl 'https://api.lumticket.com/api/team/roles?businessProfileId=1' \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -1029,7 +1051,7 @@ curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/roles?businessProfi
 `POST /api/team/invitations` creates a pending invitation and sends an email through the configured SMTP account. The owner must provide `businessProfileId`, `email`, and `name`. `roleId` is optional; `role` can be used as a fallback role name. Invitations expire after seven days by default.
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations \
+curl -X POST https://api.lumticket.com/api/team/invitations \
   -H 'Authorization: Bearer <owner-token>' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -1048,7 +1070,7 @@ The invitation is stored in the database before email delivery and the action is
 `GET /api/team/invitations?businessProfileId=<id>` lists invitations for the owned profile.
 
 ```bash
-curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations?businessProfileId=1' \
+curl 'https://api.lumticket.com/api/team/invitations?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
@@ -1057,7 +1079,7 @@ curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations?busines
 `GET /api/team/invitations/:token` is public and validates that the invitation exists, is pending, and has not expired.
 
 ```bash
-curl https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token>
+curl https://api.lumticket.com/api/team/invitations/<invitation-token>
 ```
 
 ### Accept an invitation (creates the member's login credentials)
@@ -1067,7 +1089,7 @@ table at approval time — the invited person does not need an account
 beforehand:
 
 ```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/team/invitations/<invitation-token> \
+curl -X POST https://api.lumticket.com/api/team/invitations/<invitation-token> \
   -H 'Content-Type: application/json' \
   -d '{"password":"Password123!","phone":"+260991234567"}'
 ```
@@ -1100,7 +1122,7 @@ An expired invitation returns `410`. A user who already belongs to a team return
 `GET /api/audit?businessProfileId=<id>` returns audit events for an owned business profile in creation order.
 
 ```bash
-curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/audit?businessProfileId=1' \
+curl 'https://api.lumticket.com/api/audit?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
