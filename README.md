@@ -786,6 +786,8 @@ if (payment.checkoutUrl) { // In a browser; in Expo, open the URL with expo-link
 
 `POST /api/payments/onekhusa` returns HTTP `201` when the provider accepts the initiation. A mobile-money payment is still `pending` while the customer approves the prompt; a card response includes `checkoutUrl` for hosted checkout. For publishing, use the returned payment `id` as the `paymentId` when creating the event.
 
+For `tnm` and `airtel`, `phone` is accepted in any common Malawian format — `0991234567`, `991234567`, `265991234567`, `+265991234567` or `00991234567` — and is normalised to `0991234567` before it is sent to OneKhusa. A value that cannot be a mobile wallet number is rejected with `400` before any payment is initiated.
+
 3. Poll the authenticated `GET /api/payments/onekhusa?businessProfileId=<id>&paymentId=<payment-id>` endpoint while the payment is pending. The server changes payment status only after it receives and verifies the OneKhusa webhook. Continue only when status is `succeeded`; stop and show an appropriate error for `failed` or `reversed`. A browser redirect or the initial `201` is not proof of payment.
 4. Call `POST /api/events` with the `paymentId` and event details. The event API verifies that the payment succeeded, belongs to the current user and business profile, and meets the publishing-fee requirement.
 
@@ -796,7 +798,13 @@ Customer ticket checkout uses `POST /api/checkout/tickets` rather than the busin
 #### Errors and deployment checks
 
 - `401` means the access token is missing or invalid; sign in or refresh the session.
-- `400` means a required field, payment method, currency, or mobile number is invalid. OneKhusa rejecting the request is also reported as `400`; the response's `error` is OneKhusa's own reason (for example a sandbox wallet that is not one of the test wallets), plus a `hint` while `ONEKHUSA_BASE_URL` points at the sandbox.
+- `400` means a required field, payment method, currency, or mobile number is invalid. OneKhusa rejecting the request is also reported as `400`, with OneKhusa's own reason in `error`:
+
+```json
+{ "error": "999000000 is not a correct test phone number", "paymentId": 1, "providerStatus": 400, "hint": "OneKhusa's sandbox only accepts its test TNM Mpamba wallet 231100000101 (PIN 1234)." }
+```
+
+  `providerStatus` is the HTTP status OneKhusa returned and `hint` is only included while `ONEKHUSA_BASE_URL` points at the sandbox.
 - `404` for publishing payments can mean the profile doesn't belong to the signed-in user.
 - `502` means OneKhusa could not be reached or failed on its side (credentials, connector ID, or a mismatch between the connector and `ONEKHUSA_BASE_URL`). Check the Vercel **API project** function logs for `OneKhusa initiation error` (or `Ticket checkout initiation error`). OneKhusa's own validation rejections are returned as `400` with its detail, not as `502`.
 
