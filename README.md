@@ -671,6 +671,13 @@ business that gets paid are always decided by the server from the ticket type.
 For card payments set `ONEKHUSA_SUCCESS_URL` / `ONEKHUSA_FAILURE_URL` to a lumticket.com page
 (for example `https://lumticket.com/tickets`).
 
+## Publishing fee
+
+`GET /api/payments/publishing-fee` (public) returns `{ amount, currency: "MWK" }`; set the amount with the
+`PUBLISHING_FEE_MWK` env var (default 10000). `POST /api/events` now rejects (`402`) a payment below that
+amount, a customer ticket payment or reversed payment (`400`), and a payment already used by another
+listing (`409`).
+
 ## Payments and events
 
 Event publishing requires a successful payment belonging to the same authenticated user and business profile. Customers use `https://lumticket.com`, businesses use `https://business.lumticket.com`, and both call the API at `https://api.lumticket.com`. Payments go through the [OneKhusa API](https://docs.onekhusa.com); sandbox and live environments are selected with `ONEKHUSA_BASE_URL`.

@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { businessProfiles, events, payments, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
+import { publishingFeeMwk } from "@/lib/fees";
+import { readIntent } from "@/lib/purchase";
 
 interface TicketInput {
   name?: string;
@@ -51,6 +53,16 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (!payment) return NextResponse.json({ error: "Payment not found for this business" }, { status: 404 });
     if (payment.status !== "succeeded") return NextResponse.json({ error: "A successful payment is required" }, { status: 402 });
+    // The payment must be a publishing fee: right amount, not a customer ticket purchase, not reversed, not already used.
+    const paymentMeta = (payment.metadata ?? {}) as Record<string, unknown>;
+    if (readIntent(paymentMeta) || paymentMeta.reversed) {
+      return NextResponse.json({ error: "This payment cannot be used to publish a listing" }, { status: 400 });
+    }
+    if (payment.currency !== "MWK" || payment.amount < publishingFeeMwk()) {
+      return NextResponse.json({ error: `The publishing fee is MWK ${publishingFeeMwk()}` }, { status: 402 });
+    }
+    const [alreadyUsed] = await db.select({ id: events.id }).from(events).where(eq(events.paymentId, paymentId)).limit(1);
+    if (alreadyUsed) return NextResponse.json({ error: "This payment has already been used to publish a listing" }, { status: 409 });
 
     const normalizedTickets = tickets.map((ticket) => {
       const capacity = Number(ticket.capacity);
