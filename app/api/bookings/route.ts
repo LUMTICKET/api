@@ -45,6 +45,12 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    if (body.kind === "event") {
+      return NextResponse.json(
+        { error: "Event tickets are issued only after payment. Use POST /api/checkout/tickets." },
+        { status: 403 }
+      );
+    }
     const status = body.status ?? "upcoming";
     if (!statuses.includes(status)) {
       return NextResponse.json({ error: `status must be one of ${statuses.join("|")}` }, { status: 400 });

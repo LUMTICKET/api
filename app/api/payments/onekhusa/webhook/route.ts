@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { payments } from "@/drizzle/schema";
 import { verifyWebhook } from "@/lib/onekhusa";
 import { createAuditLog } from "@/lib/audit";
+import { fulfilTicketPurchase } from "@/lib/purchase";
 
 // Webhook receiver for pushpayment.success | pushpayment.failed | pushpayment.reversed.
 // Register this URL in OneKhusa portal -> Developers -> Webhooks (one webhook per event).
@@ -40,7 +41,11 @@ export async function POST(req: NextRequest) {
 
   // Never downgrade a succeeded payment on a late/duplicate "failed"; reversals are allowed.
   if (payment.status === "succeeded" && event === "pushpayment.failed") return NextResponse.json({ received: true });
-  if (payment.status === next) return NextResponse.json({ received: true, duplicate: true });
+  if (payment.status === next) {
+    // A retried webhook is a free chance to finish a purchase that failed to fulfil the first time.
+    if (next === "succeeded") await fulfilSafely(payment.id);
+    return NextResponse.json({ received: true, duplicate: true });
+  }
 
   const meta = { ...((payment.metadata as Record<string, unknown>) ?? {}), lastEvent: event, webhook: data };
   await db
@@ -62,5 +67,17 @@ export async function POST(req: NextRequest) {
     details: { event, reference: payment.reference, transactionReferenceNumber: data.transactionReferenceNumber ?? null },
   });
 
+  // Ticket purchases: issue the booking now so it exists even if the buyer closed the tab.
+  if (next === "succeeded") await fulfilSafely(payment.id);
+
   return NextResponse.json({ received: true });
+}
+
+async function fulfilSafely(paymentId: number) {
+  try {
+    await fulfilTicketPurchase(paymentId);
+  } catch (err) {
+    // Never fail the webhook over this: the buyer's status poll will retry fulfilment.
+    console.error("Ticket fulfilment error:", err);
+  }
 }

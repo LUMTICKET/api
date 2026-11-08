@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { events, parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
+import { bookings, events, parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { getProfileByUserId, parseId } from "@/lib/ownership";
@@ -46,6 +46,21 @@ export async function POST(req: NextRequest) {
     // Resolve the code: ticket via ticket_types.id (numeric codes) or parcel
     // via reference. Also detect duplicates from prior valid scans.
     let exists = false;
+    let admits = 1; // a booking for N tickets can be scanned N times
+    if (kind === "ticket") {
+      // Purchased tickets carry their booking reference (LMT-EVT-...) in the QR code.
+      const [booked] = await db
+        .select({ quantity: bookings.quantity, status: bookings.status })
+        .from(bookings)
+        .innerJoin(ticketTypes, eq(bookings.ticketTypeId, ticketTypes.id))
+        .innerJoin(events, eq(ticketTypes.eventId, events.id))
+        .where(and(eq(bookings.reference, code), eq(events.businessProfileId, profile.id)))
+        .limit(1);
+      if (booked && booked.status !== "cancelled") {
+        exists = true;
+        admits = booked.quantity;
+      }
+    }
     if (kind === "parcel") {
       const [parcel] = await db
         .select({ id: parcels.id })
@@ -53,7 +68,7 @@ export async function POST(req: NextRequest) {
         .where(and(eq(parcels.reference, code), eq(parcels.businessProfileId, profile.id)))
         .limit(1);
       exists = Boolean(parcel);
-    } else {
+    } else if (!exists) {
       const numericId = parseId(code.replace(/\D/g, ""));
       if (numericId) {
         const [ticket] = await db
@@ -66,8 +81,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [priorValid] = await db
-      .select({ id: scanEvents.id })
+    const [{ validScans }] = await db
+      .select({ validScans: sql<number>`count(*)::int` })
       .from(scanEvents)
       .where(
         and(
@@ -75,10 +90,9 @@ export async function POST(req: NextRequest) {
           eq(scanEvents.code, code),
           eq(scanEvents.result, "valid")
         )
-      )
-      .limit(1);
+      );
 
-    const result = priorValid ? "duplicate" : exists ? "valid" : "invalid";
+    const result = validScans >= admits ? "duplicate" : exists ? "valid" : "invalid";
 
     const [created] = await db
       .insert(scanEvents)

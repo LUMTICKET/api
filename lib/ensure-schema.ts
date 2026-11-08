@@ -352,6 +352,14 @@ async function runEnsure() {
     )
   `);
 
+  // Ticket purchases: link a booking to the payment/ticket type that created it (mirrors 0008)
+  await db.execute(sql`
+    ALTER TABLE "bookings"
+      ADD COLUMN IF NOT EXISTS "payment_id" integer UNIQUE REFERENCES "payments"("id") ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS "ticket_type_id" integer REFERENCES "ticket_types"("id") ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS "quantity" integer DEFAULT 1 NOT NULL
+  `);
+
   // New columns on existing tables
   await db.execute(sql`
     ALTER TABLE "events"

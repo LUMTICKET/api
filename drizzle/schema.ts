@@ -517,6 +517,10 @@ export const bookings = pgTable("bookings", {
   scheduledFor: timestamp("scheduled_for", { mode: "date", withTimezone: true }).notNull(),
   amount: integer("amount").notNull().default(0),
   currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  /** Set for tickets bought through /api/checkout/tickets: one booking per succeeded payment. */
+  paymentId: integer("payment_id").unique(),
+  ticketTypeId: integer("ticket_type_id"),
+  quantity: integer("quantity").notNull().default(1),
   status: varchar("status", { length: 20 })
     .notNull()
     .default("upcoming")

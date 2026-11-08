@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
         countryCode: events.countryCode,
         startsAt: events.startsAt,
         image: events.image,
+        maxPerUser: events.maxPerUser,
         operator: businessProfiles.businessName,
       })
       .from(events)
@@ -78,6 +79,14 @@ export async function GET(req: NextRequest) {
         ...event,
         fromPrice: tickets.length ? Math.min(...tickets.map((t) => t.price)) : null,
         currency: tickets[0]?.currency ?? "MWK",
+        tickets: tickets.map((t) => ({
+          id: t.id,
+          name: t.name,
+          price: t.price,
+          currency: t.currency,
+          remaining: t.remaining,
+          perks: t.perks ?? [],
+        })),
         status,
       };
     });

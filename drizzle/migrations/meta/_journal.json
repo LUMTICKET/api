@@ -57,6 +57,13 @@
       "when": 1789123200000,
       "tag": "0007_auth_identity_business_flow",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789209600000,
+      "tag": "0008_ticket_purchases",
+      "breakpoints": true
     }
   ]
 }

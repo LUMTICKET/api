@@ -648,6 +648,29 @@ curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb/<business-prof
   -d '{"description":"Updated business description"}'
 ```
 
+## Customer ticket purchases (lumticket.com)
+
+Buyers are ordinary signed-in users; they do not own a business profile. The price and the
+business that gets paid are always decided by the server from the ticket type.
+
+1. `GET /api/catalog/events` now includes `tickets: [{ id, name, price, currency, remaining, perks }]`
+   and `maxPerUser` for every event.
+2. `POST /api/checkout/tickets` (Bearer) with `{ ticketTypeId, quantity, method: "tnm"|"airtel"|"card", phone? }`
+   creates a pending OneKhusa payment and returns `{ paymentId, status, amount, checkoutUrl? }`.
+   `409` = sold out / not enough left, `404` = not on sale.
+3. `GET /api/checkout/tickets/:paymentId` (Bearer, the buyer only) returns `{ status: "pending" | "failed" }`
+   or, once the signed webhook has marked it paid, `{ status: "succeeded", booking }`.
+   `booking.reference` (`LMT-EVT-…`) is the QR payload. `{ status: "succeeded", problem: "sold-out" }`
+   means the last tickets went first; the payment is flagged in `/api/admin/reconciliation` for refund.
+4. The booking is created exactly once per payment (`bookings.payment_id` is unique), by the webhook
+   or by the buyer's poll, whichever arrives first. Stock is decremented at that moment.
+5. `POST /api/validations` with `kind: "ticket"` accepts these booking references; a booking for N
+   tickets scans valid N times, then `duplicate`.
+6. `POST /api/bookings` now rejects `kind: "event"` (403) so event tickets cannot be created without paying.
+
+For card payments set `ONEKHUSA_SUCCESS_URL` / `ONEKHUSA_FAILURE_URL` to a lumticket.com page
+(for example `https://lumticket.com/tickets`).
+
 ## Payments and events
 
 Event publishing requires a successful payment belonging to the same authenticated user and business profile. Customers use `https://lumticket.com`, businesses use `https://business.lumticket.com`, and both call the API at `https://api.lumticket.com`. Payments go through the [OneKhusa API](https://docs.onekhusa.com); sandbox and live environments are selected with `ONEKHUSA_BASE_URL`.
