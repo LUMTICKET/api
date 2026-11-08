@@ -139,8 +139,9 @@ npx drizzle-kit push
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/api/payments/simulate` | Bearer | Create a succeeded payment (`card`/`tnm`/`airtel`) |
-| `GET` | `/api/payments/simulate?businessProfileId=` | Bearer | Payments for an owned profile |
+| `POST` | `/api/payments/onekhusa` | Bearer | Start a real OneKhusa payment (`tnm`/`airtel` push, `card` hosted checkout) |
+| `GET` | `/api/payments/onekhusa?businessProfileId=[&paymentId=]` | Bearer | Payments for an owned profile / poll one |
+| `POST` | `/api/payments/onekhusa/webhook` | Signature | OneKhusa `pushpayment.*` webhooks |
 | `POST` | `/api/events` | Bearer | Publish an event + ticket types (needs a succeeded `paymentId`) |
 | `GET` | `/api/events?businessProfileId=` | Bearer | Events for an owned profile |
 | `GET` | `/api/events/:id` | Bearer | Event with its ticket types (owner or team `admin`) |
@@ -363,7 +364,7 @@ export async function resolveRoute() {
 | Business details form | `GET /api/kyb`, `PUT /api/kyb/:id` |
 | Browse events (public) | `GET /api/catalog/events?country=&q=` |
 | Browse bus routes (public) | `GET /api/catalog/routes?origin=&destination=` |
-| Event detail / checkout | `GET /api/events/:id`, `POST /api/payments/simulate`, `POST /api/bookings` |
+| Event detail / checkout | `GET /api/events/:id`, `POST /api/payments/onekhusa`, `POST /api/bookings` |
 | My tickets / trips | `GET /api/bookings`, `GET /api/bookings/:reference` |
 | Send a parcel | `POST /api/parcels`, then `GET /api/parcels/:reference/tracking` |
 | Track a parcel (public) | `GET /api/parcels/:reference/tracking` |
@@ -649,25 +650,53 @@ curl -X PUT https://api-gamma-mocha-qn31xem8po.vercel.app/api/kyb/<business-prof
 
 ## Payments and events
 
-Event publishing requires a successful payment belonging to the same authenticated user and business profile. The current payment provider is intentionally a simulation so the Expo flow can be integrated before a mobile-money or card provider is connected.
+Event publishing requires a successful payment belonging to the same authenticated user and business profile. Customers use `https://lumticket.com`, businesses use `https://business.lumticket.com`, and both call the API at `https://api.lumticket.com`. Payments go through the [OneKhusa API](https://docs.onekhusa.com); sandbox and live environments are selected with `ONEKHUSA_BASE_URL`.
 
-### Simulate the event publishing payment
+### Environment variables
 
-`POST /api/payments/simulate` creates a successful payment record. Amounts are integer minor units; for MWK, send the amount as whole kwacha.
-
-```bash
-curl -X POST https://api-gamma-mocha-qn31xem8po.vercel.app/api/payments/simulate \
-  -H 'Authorization: Bearer <owner-token>' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "businessProfileId": 1,
-    "amount": 10000,
-    "currency":"MWK",
-    "method":"tnm"
-  }'
+```
+ONEKHUSA_BASE_URL=https://api.onekhusa.com/sandbox/v1   # live: https://api.onekhusa.com/live/v1
+ONEKHUSA_API_KEY=
+ONEKHUSA_API_SECRET=
+ONEKHUSA_ORGANISATION_ID=
+ONEKHUSA_MERCHANT_ACCOUNT_NUMBER=            # 8 digits
+ONEKHUSA_CAPTURED_BY=you@yourcompany.com     # email of the operator initiating the payment
+ONEKHUSA_CONNECTOR_TNM=                      # numeric TNM Mpamba connector ID for this environment
+ONEKHUSA_CONNECTOR_AIRTEL=                   # numeric Airtel Money connector ID for this environment
+ONEKHUSA_WEBHOOK_SECRET_SUCCESS=             # matching signing secret for pushpayment.success
+ONEKHUSA_WEBHOOK_SECRET_FAILED=
+ONEKHUSA_WEBHOOK_SECRET_REVERSED=
+ONEKHUSA_SUCCESS_URL=                        # required only for card hosted checkout
+ONEKHUSA_FAILURE_URL=                        # required only for card hosted checkout
 ```
 
-Supported methods are `card`, `tnm`, and `airtel`. Save the returned payment `id` as `paymentId`.
+For TNM and Airtel Money, configure the sandbox API credentials, merchant account, operator email, and the matching numeric connector IDs from OneKhusa's **Get All Connectors** API. Connector IDs must belong to the same environment as `ONEKHUSA_BASE_URL`. The success and failure redirect URLs are only used by card hosted checkout.
+
+In the OneKhusa portal (Developers -> Webhooks), register this webhook URL for each of `pushpayment.success`, `pushpayment.failed` and `pushpayment.reversed`:
+
+```
+https://api.lumticket.com/api/payments/onekhusa/webhook
+```
+
+Copy each event's signing secret into its corresponding `ONEKHUSA_WEBHOOK_SECRET_*` variable. The secrets must match exactly; the handler verifies HMAC-SHA512 signatures over the raw request body. All three events must be subscribed for OneKhusa payment initiation to work. Set these variables in the deployed API's environment as well as local development, then redeploy/restart the API.
+
+### Start the event publishing payment
+
+`POST /api/payments/onekhusa` creates a `pending` payment and calls OneKhusa. Amounts are whole MWK.
+
+```bash
+# Mobile money: customer gets a USSD/STK PIN prompt on `phone`
+curl -X POST https://api.lumticket.com/api/payments/onekhusa \
+  -H 'Authorization: Bearer <owner-token>' -H 'Content-Type: application/json' \
+  -d '{"businessProfileId":1,"amount":10000,"method":"tnm","phone":"0999000000"}'
+
+# Card: response contains checkoutUrl (valid 10 min), redirect the customer there
+curl -X POST https://api.lumticket.com/api/payments/onekhusa \
+  -H 'Authorization: Bearer <owner-token>' -H 'Content-Type: application/json' \
+  -d '{"businessProfileId":1,"amount":10000,"method":"card"}'
+```
+
+The payment only becomes `succeeded` when the signed `pushpayment.success` webhook arrives. Poll `GET /api/payments/onekhusa?businessProfileId=1&paymentId=<id>` until `status` is `succeeded` or `failed`, then use `paymentId` below.
 
 ### Create an event and ticket types
 
@@ -727,7 +756,7 @@ The update is transactional: event changes and ticket replacement either both su
 curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/events?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 
-curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/payments/simulate?businessProfileId=1' \
+curl 'https://api.lumticket.com/api/payments/onekhusa?businessProfileId=1' \
   -H 'Authorization: Bearer <owner-token>'
 ```
 
@@ -735,23 +764,23 @@ curl 'https://api-gamma-mocha-qn31xem8po.vercel.app/api/payments/simulate?busine
 
 After the owner submits the create form:
 
-1. Call `POST /api/payments/simulate` with the selected payment method and platform fee.
-2. Read the returned payment `id`.
+1. Call `POST /api/payments/onekhusa` with the selected method (plus `phone` for tnm/airtel; open `checkoutUrl` for card).
+2. Poll the payment `id` until `status` is `succeeded`.
 3. Call `POST /api/events` with that `paymentId` and map each Expo tier to a ticket: `name`, numeric `price`, `currency`, `perks` array, and numeric `capacity` from `remaining`.
 4. Show the success screen only after the event request returns `201`.
 
 Example client helper:
 
 ```ts
-const API_URL = "https://api-gamma-mocha-qn31xem8po.vercel.app";
+const API_URL = "https://api.lumticket.com";
 
 async function publishEvent(token: string, businessProfileId: number, payload: any, method: "card" | "tnm" | "airtel") {
-  const paymentResponse = await fetch(`${API_URL}/api/payments/simulate`, {
+  const paymentResponse = await fetch(`${API_URL}/api/payments/onekhusa`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ businessProfileId, amount: 10000, currency: "MWK", method }),
   });
-  if (!paymentResponse.ok) throw new Error("Payment simulation failed");
+  if (!paymentResponse.ok) throw new Error("Payment failed to start");
   const payment = await paymentResponse.json();
 
   const eventResponse = await fetch(`${API_URL}/api/events`, {

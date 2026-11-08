@@ -205,7 +205,7 @@ export const payments = pgTable("payments", {
   userId: integer("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  provider: varchar("provider", { length: 50 }).notNull().default("simulation"),
+  provider: varchar("provider", { length: 50 }).notNull().default("onekhusa"),
   method: varchar("method", { length: 30 }).notNull().$type<"card" | "tnm" | "airtel">(),
   amount: integer("amount").notNull(),
   currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
