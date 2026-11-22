@@ -1,0 +1,53 @@
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+const allowedOrigins = [
+  "https://business.lumticket.com",
+  "http://localhost:8081",
+  "http://localhost:19006",
+  "https://lumiticketui.vercel.app",
+  "https://luticketnewui.vercel.app",
+  "https://lumticket.com",
+  "https://www.lumticket.com",
+  "https://studious-meme-97qjjq9wrpqwhpj97-3000.app.github.dev",
+  // Extra origins without a redeploy of code: ALLOWED_ORIGINS=https://a.com,https://b.vercel.app
+  ...(process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean),
+];
+
+export function proxy(req: NextRequest) {
+  const origin = req.headers.get("origin") ?? "";
+  const isAllowed =
+    allowedOrigins.includes(origin) || origin.startsWith("https://localhost");
+
+  // Preflight
+  if (req.method === "OPTIONS") {
+    const res = new NextResponse(null, { status: 204 });
+    res.headers.set("Access-Control-Allow-Origin", isAllowed ? origin : "*");
+    res.headers.set(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    );
+    res.headers.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With"
+    );
+    res.headers.set("Access-Control-Max-Age", "86400");
+    return res;
+  }
+
+  // Actual request
+  const res = NextResponse.next();
+  if (isAllowed) {
+    res.headers.set("Access-Control-Allow-Origin", origin);
+    res.headers.set("Access-Control-Allow-Credentials", "true");
+    res.headers.set(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With"
+    );
+  }
+  return res;
+}
+
+export const config = {
+  matcher: "/api/:path*",
+};
