@@ -399,9 +399,17 @@ async function runEnsure() {
       "attempts" integer DEFAULT 0 NOT NULL,
       "last_error" text,
       "sent_at" timestamp,
+      "paid_email_at" timestamp,
+      "details_email_at" timestamp,
       "created_at" timestamp DEFAULT now() NOT NULL,
       "updated_at" timestamp DEFAULT now() NOT NULL
     )
+  `);
+
+  await db.execute(sql`
+    ALTER TABLE "payouts"
+      ADD COLUMN IF NOT EXISTS "paid_email_at" timestamp,
+      ADD COLUMN IF NOT EXISTS "details_email_at" timestamp
   `);
 
   // Reference data

@@ -254,6 +254,9 @@ export const payouts = pgTable("payouts", {
   attempts: integer("attempts").notNull().default(0),
   lastError: text("last_error"),
   sentAt: timestamp("sent_at", { mode: "date" }),
+  /** When the organiser was emailed that this payout was sent / that payout details are missing. */
+  paidEmailAt: timestamp("paid_email_at", { mode: "date" }),
+  detailsEmailAt: timestamp("details_email_at", { mode: "date" }),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });

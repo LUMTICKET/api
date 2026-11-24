@@ -178,3 +178,72 @@ export async function sendInvitationEmail({
     throw err;
   }
 }
+
+const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const mwk = (n: number) => `MWK ${n.toLocaleString("en-US")}`;
+
+function simpleEmail(title: string, intro: string, rows: [string, string][], footer: string) {
+  const table = rows
+    .map(([k, v], i) => {
+      const last = i === rows.length - 1;
+      return `<tr><td style="padding:10px 0;color:#a3a3a3;font-size:14px;${last ? "" : "border-bottom:1px solid #262626;"}">${esc(k)}</td><td style="padding:10px 0;color:#fafafa;font-size:14px;text-align:right;${last ? "font-weight:700;" : "border-bottom:1px solid #262626;"}">${esc(v)}</td></tr>`;
+    })
+    .join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${esc(title)}</title></head>
+<body style="margin:0;padding:0;background:#0a0a0a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 20px;"><tr><td align="center">
+<table width="480" cellpadding="0" cellspacing="0" style="max-width:100%;background:#141414;border-radius:16px;border:1px solid #262626;"><tr><td style="padding:36px 32px;">
+<h1 style="color:#fafafa;font-size:22px;margin:0 0 12px;">${esc(title)}</h1>
+<p style="color:#a3a3a3;font-size:15px;line-height:1.6;margin:0 0 20px;">${intro}</p>
+${rows.length ? `<table width="100%" cellpadding="0" cellspacing="0">${table}</table>` : ""}
+<p style="color:#737373;font-size:13px;line-height:1.5;margin:24px 0 0;">${footer}</p>
+</td></tr></table><p style="color:#404040;font-size:12px;margin-top:20px;">Sent by Lumticket</p></td></tr></table></body></html>`;
+}
+
+/** Tells an organiser that the money from a ticket sale has been sent to their payout account. */
+export async function sendPayoutSentEmail(p: {
+  to: string;
+  businessName: string;
+  eventTitle: string;
+  ticketSummary: string;
+  gross: number;
+  commissionRate: number;
+  commission: number;
+  net: number;
+  destination: string;
+  reference: string;
+}) {
+  const html = simpleEmail(
+    "You've been paid",
+    `Hi <strong style="color:#fafafa;">${esc(p.businessName)}</strong>, a ticket sale for <strong style="color:#fafafa;">${esc(p.eventTitle)}</strong> has been paid out to your account.`,
+    [
+      ["Sale", p.ticketSummary],
+      ["Ticket sales", mwk(p.gross)],
+      [`Lumticket commission (${p.commissionRate}%)`, `- ${mwk(p.commission)}`],
+      ["Sent to " + p.destination, mwk(p.net)],
+    ],
+    `Reference ${esc(p.reference)}. Mobile money and bank transfers can take a few minutes to show on your side. If you don't see it, reply to this email with the reference.`,
+  );
+  await getTransport().sendMail({
+    from: process.env.FROM_EMAIL || "Lumticket <payments@lumticket.com>",
+    to: p.to,
+    subject: `You've been paid ${mwk(p.net)} for ${p.eventTitle}`,
+    html,
+  });
+}
+
+/** Tells an organiser that a sale could not be paid out yet because they have no payout account. */
+export async function sendPayoutDetailsNeededEmail(p: { to: string; businessName: string; eventTitle: string; net: number }) {
+  const html = simpleEmail(
+    "Add your payout account to get paid",
+    `Hi <strong style="color:#fafafa;">${esc(p.businessName)}</strong>, you just sold tickets for <strong style="color:#fafafa;">${esc(p.eventTitle)}</strong>, but we don't have a payout account for you yet. Your share of this sale is <strong style="color:#fafafa;">${esc(mwk(p.net))}</strong>.`,
+    [],
+    "Sign in to your Lumticket business dashboard, open Business profile and add a mobile money or bank account under Payout account. Everything waiting for you is sent automatically as soon as you save it.",
+  );
+  await getTransport().sendMail({
+    from: process.env.FROM_EMAIL || "Lumticket <payments@lumticket.com>",
+    to: p.to,
+    subject: "Add your payout account to receive your ticket money",
+    html,
+  });
+}

@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS "payouts" (
   "attempts" integer DEFAULT 0 NOT NULL,
   "last_error" text,
   "sent_at" timestamp,
+  "paid_email_at" timestamp,
+  "details_email_at" timestamp,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL
 );

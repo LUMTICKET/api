@@ -7,9 +7,10 @@
 //
 // One `payouts` row per payment (payment_id is unique) holds the split, and its charge_id is what is
 // sent to PayChangu, so a retry or a double webhook can never pay an organiser twice.
-import { and, eq, inArray, lt, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { bookings, businessProfiles, events, payments, payouts, type Payout } from "@/drizzle/schema";
+import { bookings, businessProfiles, events, payments, payouts, users, type Payout } from "@/drizzle/schema";
+import { sendPayoutDetailsNeededEmail, sendPayoutSentEmail } from "@/lib/email";
 import { isEventTier, splitTicketAmount, type EventTier } from "@/lib/fees";
 import { getPayoutState, normalizeMsisdn, operatorRefFor, PaychanguError, paychanguErrorDetail, sendBankPayout, sendMobileMoneyPayout } from "@/lib/paychangu";
 import { readIntent } from "@/lib/purchase";
@@ -35,6 +36,82 @@ export function hasPayoutAccount(p: PayoutAccount): boolean {
 async function tierOf(eventId: number): Promise<EventTier> {
   const [event] = await db.select({ tier: events.tier }).from(events).where(eq(events.id, eventId)).limit(1);
   return event && isEventTier(event.tier) ? event.tier : "standard";
+}
+
+const METHOD_LABEL = { tnm: "TNM Mpamba", airtel: "Airtel Money", bank: "your bank account" } as const;
+
+async function organiserEmail(profile: { email: string | null; userId: number }): Promise<string | null> {
+  if (profile.email?.includes("@")) return profile.email;
+  const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, profile.userId)).limit(1);
+  return u?.email?.includes("@") ? u.email : null;
+}
+
+/** Emails the organiser once per payout that the money has been sent. Never throws; a failed email is retried on the next call. */
+async function notifyPaid(row: Payout): Promise<void> {
+  if (row.paidEmailAt || (row.status !== "sent" && row.status !== "paid")) return;
+  const [claimed] = await db
+    .update(payouts)
+    .set({ paidEmailAt: new Date() })
+    .where(and(eq(payouts.id, row.id), isNull(payouts.paidEmailAt)))
+    .returning({ id: payouts.id });
+  if (!claimed) return; // someone else is sending it
+  try {
+    const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.id, row.businessProfileId)).limit(1);
+    const [payment] = await db.select({ metadata: payments.metadata, reference: payments.reference }).from(payments).where(eq(payments.id, row.paymentId)).limit(1);
+    const to = profile ? await organiserEmail(profile) : null;
+    if (!profile || !payment || !to) return; // nobody to email; leave it marked so we do not retry forever
+    const intent = readIntent(payment.metadata);
+    const method = profile.payoutMethod ?? "tnm";
+    const tail = (profile.payoutAccountNumber ?? "").slice(-3);
+    await sendPayoutSentEmail({
+      to,
+      businessName: profile.businessName,
+      eventTitle: intent?.eventTitle ?? "your event",
+      ticketSummary: intent ? `${intent.quantity} x ${intent.ticketName}` : "Ticket sale",
+      gross: row.grossAmount,
+      commissionRate: Number(row.commissionRate),
+      commission: row.commissionAmount,
+      net: row.netAmount,
+      destination: `${METHOD_LABEL[method]}${tail ? ` ending ${tail}` : ""}`,
+      reference: payment.reference,
+    });
+  } catch (err) {
+    console.error("Payout email failed (will retry):", err);
+    await db.update(payouts).set({ paidEmailAt: null }).where(eq(payouts.id, row.id));
+  }
+}
+
+/** Emails the organiser (at most once a day) that a sale is waiting because they have no payout account. */
+async function notifyDetailsNeeded(row: Payout): Promise<void> {
+  if (row.detailsEmailAt) return;
+  const dayAgo = new Date(Date.now() - 24 * 3600_000);
+  const [recent] = await db
+    .select({ id: payouts.id })
+    .from(payouts)
+    .where(and(eq(payouts.businessProfileId, row.businessProfileId), gt(payouts.detailsEmailAt, dayAgo)))
+    .limit(1);
+  if (recent) return;
+  const [claimed] = await db
+    .update(payouts)
+    .set({ detailsEmailAt: new Date() })
+    .where(and(eq(payouts.id, row.id), isNull(payouts.detailsEmailAt)))
+    .returning({ id: payouts.id });
+  if (!claimed) return;
+  try {
+    const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.id, row.businessProfileId)).limit(1);
+    const [payment] = await db.select({ metadata: payments.metadata }).from(payments).where(eq(payments.id, row.paymentId)).limit(1);
+    const to = profile ? await organiserEmail(profile) : null;
+    if (!profile || !to) return;
+    await sendPayoutDetailsNeededEmail({
+      to,
+      businessName: profile.businessName,
+      eventTitle: readIntent(payment?.metadata)?.eventTitle ?? "your event",
+      net: row.netAmount,
+    });
+  } catch (err) {
+    console.error("Payout-details email failed:", err);
+    await db.update(payouts).set({ detailsEmailAt: null }).where(eq(payouts.id, row.id));
+  }
 }
 
 /**
@@ -73,7 +150,11 @@ export async function sendOrganiserPayout(paymentId: number): Promise<Payout | n
       .onConflictDoNothing();
 
     const [row] = await db.select().from(payouts).where(eq(payouts.paymentId, payment.id)).limit(1);
-    if (!row || row.status === "sent" || row.status === "paid") return row ?? null;
+    if (!row) return null;
+    if (row.status === "sent" || row.status === "paid") {
+      await notifyPaid(row); // no-op if the organiser was already emailed
+      return row;
+    }
     if (row.attempts >= MAX_ATTEMPTS) return row;
 
     const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.id, row.businessProfileId)).limit(1);
@@ -83,6 +164,7 @@ export async function sendOrganiserPayout(paymentId: number): Promise<Payout | n
         .set({ status: "needs-details", lastError: "The organiser has not added a payout account yet", updatedAt: new Date() })
         .where(and(eq(payouts.id, row.id), inArray(payouts.status, ["pending", "needs-details", "failed"])))
         .returning();
+      if (updated) await notifyDetailsNeeded(updated);
       return updated ?? row;
     }
     if (row.netAmount <= 0) return row;
@@ -138,6 +220,7 @@ export async function sendOrganiserPayout(paymentId: number): Promise<Payout | n
         resourceId: claimed.id,
         details: { paymentId: payment.id, gross: claimed.grossAmount, commission: claimed.commissionAmount, net: claimed.netAmount, tier },
       }).catch(() => undefined);
+      if (sent) await notifyPaid(sent);
       return sent;
     } catch (err) {
       const message = err instanceof PaychanguError ? (paychanguErrorDetail(err.body) ?? err.message) : err instanceof Error ? err.message : String(err);
