@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { bookings, events, parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
+import { bookings, busBookings, events, parcels, scanEvents, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { getProfileByUserId, parseId } from "@/lib/ownership";
@@ -59,6 +59,18 @@ export async function POST(req: NextRequest) {
       if (booked && booked.status !== "cancelled") {
         exists = true;
         admits = booked.quantity;
+      }
+    }
+    if (kind === "ticket" && !exists) {
+      // Bus tickets carry their booking reference (LMT-BUS-...): one boarding scan per seat.
+      const [bus] = await db
+        .select({ seats: busBookings.seats, status: busBookings.status })
+        .from(busBookings)
+        .where(and(eq(busBookings.reference, code), eq(busBookings.businessProfileId, profile.id)))
+        .limit(1);
+      if (bus && bus.status !== "cancelled") {
+        exists = true;
+        admits = Math.max(1, bus.seats?.length ?? 1);
       }
     }
     if (kind === "parcel") {

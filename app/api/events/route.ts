@@ -5,7 +5,7 @@ import { businessProfiles, events, payments, ticketTypes } from "@/drizzle/schem
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
 import { publishingFeeMwk } from "@/lib/fees";
-import { readIntent } from "@/lib/purchase";
+import { readAnyIntent } from "@/lib/purchase";
 import { publicPosterUrl, validatePoster } from "@/lib/poster";
 
 interface TicketInput {
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     if (payment.status !== "succeeded") return NextResponse.json({ error: "A successful payment is required" }, { status: 402 });
     // The payment must be a publishing fee: right amount, not a customer ticket purchase, not reversed, not already used.
     const paymentMeta = (payment.metadata ?? {}) as Record<string, unknown>;
-    if (readIntent(paymentMeta) || paymentMeta.reversed) {
+    if (readAnyIntent(paymentMeta) || paymentMeta.reversed) {
       return NextResponse.json({ error: "This payment cannot be used to publish a listing" }, { status: 400 });
     }
     if (payment.currency !== "MWK" || payment.amount < publishingFeeMwk()) {

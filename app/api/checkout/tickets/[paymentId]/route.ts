@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { payments } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
-import { fulfilTicketPurchase, readIntent } from "@/lib/purchase";
+import { fulfilTicketPurchase, readAnyIntent } from "@/lib/purchase";
 import { settlePaychanguPayment } from "@/lib/paychangu";
 
 /**
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ paym
     if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     let [payment] = await db.select().from(payments).where(and(eq(payments.id, id), eq(payments.userId, user.id))).limit(1);
-    if (!payment || !readIntent(payment.metadata)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!payment || !readAnyIntent(payment.metadata)) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // PayChangu: ask PayChangu itself, so a missed webhook can't leave the buyer stuck on "pending".
     if (payment.provider === "paychangu" && payment.status === "pending") {
