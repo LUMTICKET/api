@@ -3,6 +3,7 @@ import { and, asc, eq, gt, ilike, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businessProfiles, events, ticketTypes } from "@/drizzle/schema";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
+import { publicPosterUrl } from "@/lib/poster";
 
 /**
  * GET /api/catalog/events — public event listing across all operators.
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
         countryCode: events.countryCode,
         startsAt: events.startsAt,
         image: events.image,
+        updatedAt: events.updatedAt,
         maxPerUser: events.maxPerUser,
         operator: businessProfiles.businessName,
       })
@@ -75,8 +77,10 @@ export async function GET(req: NextRequest) {
           : remaining / capacity <= 0.2
             ? "selling-fast"
             : "on-sale";
+      const { updatedAt, ...rest } = event;
       return {
-        ...event,
+        ...rest,
+        image: publicPosterUrl(event.id, event.image, updatedAt),
         fromPrice: tickets.length ? Math.min(...tickets.map((t) => t.price)) : null,
         currency: tickets[0]?.currency ?? "MWK",
         tickets: tickets.map((t) => ({

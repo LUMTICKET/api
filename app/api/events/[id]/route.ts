@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { businessProfiles, events, teamMembers, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
+import { publicPosterUrl, validatePoster } from "@/lib/poster";
 
 const categories = ["event", "bus", "flight", "tourism"] as const;
 interface TicketInput { name?: string; price?: number; currency?: string; perks?: string[]; capacity?: number; remaining?: number; }
@@ -41,6 +42,15 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const category = body.category ?? access.event.category;
     if (!categories.includes(category)) return NextResponse.json({ error: "category must be event, bus, flight, or tourism" }, { status: 400 });
 
+    // image: omitted = keep, null/"" = remove, data URL = replace.
+    let image = access.event.image;
+    const keepsExisting = typeof body.image === "string" && body.image.startsWith("/api/events/");
+    if (body.image !== undefined && !keepsExisting) {
+      const poster = validatePoster(body.image);
+      if (!poster.ok) return NextResponse.json({ error: poster.error }, { status: 400 });
+      image = poster.value;
+    }
+
     const startsAt = body.startsAt || body.date ? new Date(body.startsAt ?? body.date) : access.event.startsAt;
     if (Number.isNaN(startsAt.getTime())) return NextResponse.json({ error: "Invalid startsAt" }, { status: 400 });
 
@@ -69,7 +79,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         countryCode: body.countryCode !== undefined ? body.countryCode : access.event.countryCode,
         startsAt,
         endsAt: body.endsAt === null ? null : body.endsAt ? new Date(body.endsAt) : access.event.endsAt,
-        image: body.image ?? access.event.image,
+        image,
         tags: Array.isArray(body.tags) ? body.tags.map(String) : access.event.tags,
         maxPerUser: body.maxPerUser === undefined ? access.event.maxPerUser : Number(body.maxPerUser),
         status: body.status ?? access.event.status,
@@ -85,7 +95,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     });
 
     await createAuditLog({ actorUserId: user.id, businessProfileId: access.event.businessProfileId, action: "updated", resourceType: "event", resourceId: eventId, details: { category: updated.category, ticketTypesUpdated: hasTickets } });
-    return NextResponse.json(updated);
+    return NextResponse.json({ ...updated, image: publicPosterUrl(updated.id, updated.image, updated.updatedAt) });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Each ticket")) return NextResponse.json({ error: error.message }, { status: 400 });
     console.error("Update event error:", error);
@@ -101,7 +111,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     const access = await getEventAdmin(eventId, user.id);
     if (!access) return NextResponse.json({ error: "Event not found" }, { status: 404 });
     const tickets = await db.select().from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
-    return NextResponse.json({ ...access.event, tickets });
+    return NextResponse.json({ ...access.event, image: publicPosterUrl(access.event.id, access.event.image, access.event.updatedAt), tickets });
   } catch (error) {
     console.error("Get event error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

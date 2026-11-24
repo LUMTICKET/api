@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
 import { publishingFeeMwk } from "@/lib/fees";
 import { readIntent } from "@/lib/purchase";
+import { publicPosterUrl, validatePoster } from "@/lib/poster";
 
 interface TicketInput {
   name?: string;
@@ -35,6 +36,8 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!tickets?.length) return NextResponse.json({ error: "At least one ticket type is required" }, { status: 400 });
+    const poster = validatePoster(body.image);
+    if (!poster.ok) return NextResponse.json({ error: poster.error }, { status: 400 });
     if (!categories.includes(body.category ?? "event")) {
       return NextResponse.json({ error: "category must be event, bus, flight, or tourism" }, { status: 400 });
     }
@@ -98,7 +101,7 @@ export async function POST(req: NextRequest) {
           countryCode: body.countryCode ?? null,
           startsAt,
           endsAt: body.endsAt ? new Date(body.endsAt) : null,
-          image: body.image ?? null,
+          image: poster.value,
           tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
           maxPerUser: Number.isInteger(Number(body.maxPerUser)) ? Number(body.maxPerUser) : 5,
           status: body.status === "draft" ? "draft" : "published",
@@ -122,7 +125,7 @@ export async function POST(req: NextRequest) {
       details: { paymentId, ticketTypeCount: event.tickets.length, status: event.status },
     });
 
-    return NextResponse.json(event, { status: 201 });
+    return NextResponse.json({ ...event, image: publicPosterUrl(event.id, event.image, event.updatedAt) }, { status: 201 });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Each ticket")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
@@ -148,7 +151,7 @@ export async function GET(req: NextRequest) {
     if (!profile) return NextResponse.json({ error: "Business profile not found or not owned by user" }, { status: 404 });
 
     const records = await db.select().from(events).where(eq(events.businessProfileId, businessProfileId));
-    return NextResponse.json(records);
+    return NextResponse.json(records.map((r) => ({ ...r, image: publicPosterUrl(r.id, r.image, r.updatedAt) })));
   } catch (error) {
     console.error("List events error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
