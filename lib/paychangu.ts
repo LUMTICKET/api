@@ -256,6 +256,97 @@ export async function verifyMobileCharge(chargeId: string): Promise<Verification
   }
 }
 
+// ---- Payouts (money OUT of Lumticket's PayChangu account to an organiser) ----------------------
+//   POST {base}/mobile-money/payouts/initialize        TNM / Airtel wallet
+//   POST {base}/direct-charge/payouts/initialize       bank account
+//   GET  {base}/mobile-money/payments/{charge_id}      status of a mobile money payout
+//   GET  {base}/direct-charge/payouts/{charge_id}/details   status of a bank payout
+// charge_id must be unique per payout: re-sending the same one cannot pay twice.
+
+export async function sendMobileMoneyPayout(input: {
+  chargeId: string;
+  mobile: string;
+  operatorRefId: string;
+  amount: number;
+  name?: string | null;
+  email?: string | null;
+}) {
+  const { first, last } = splitName(input.name);
+  const r = await call<{ status?: string; message?: string }>("/mobile-money/payouts/initialize", {
+    method: "POST",
+    body: JSON.stringify({
+      mobile: input.mobile,
+      mobile_money_operator_ref_id: input.operatorRefId,
+      amount: String(input.amount),
+      charge_id: input.chargeId,
+      ...(input.email ? { email: input.email } : {}),
+      ...(first ? { first_name: first } : {}),
+      ...(last ? { last_name: last } : {}),
+    }),
+  });
+  if (typeof r?.status === "string" && FAILURE.has(r.status.toLowerCase())) {
+    throw new PaychanguError(r.message || "PayChangu rejected the payout", 400, r);
+  }
+  return r;
+}
+
+export async function sendBankPayout(input: {
+  chargeId: string;
+  bankUuid: string;
+  accountName: string;
+  accountNumber: string;
+  amount: number;
+  email?: string | null;
+}) {
+  const { first, last } = splitName(input.accountName);
+  const r = await call<{ status?: string; message?: string }>("/direct-charge/payouts/initialize", {
+    method: "POST",
+    body: JSON.stringify({
+      payout_method: "bank_transfer",
+      bank_uuid: input.bankUuid,
+      amount: String(input.amount),
+      charge_id: input.chargeId,
+      bank_account_name: input.accountName,
+      bank_account_number: input.accountNumber,
+      ...(input.email ? { email: input.email } : {}),
+      ...(first ? { first_name: first } : {}),
+      ...(last ? { last_name: last } : {}),
+    }),
+  });
+  if (typeof r?.status === "string" && FAILURE.has(r.status.toLowerCase())) {
+    throw new PaychanguError(r.message || "PayChangu rejected the payout", 400, r);
+  }
+  return r;
+}
+
+/** Final state of a payout as PayChangu reports it, or null while unknown. */
+export async function getPayoutState(chargeId: string, kind: "mobile" | "bank"): Promise<"paid" | "failed" | "pending" | null> {
+  const path = kind === "mobile" ? `/mobile-money/payments/${encodeURIComponent(chargeId)}` : `/direct-charge/payouts/${encodeURIComponent(chargeId)}/details`;
+  try {
+    const r = await call<VerifyBody>(path);
+    const d = r?.data?.transaction ?? r?.data;
+    const raw = (typeof d?.status === "string" ? d.status : typeof r?.status === "string" ? r.status : "").toLowerCase();
+    if (SUCCESS.has(raw)) return "paid";
+    if (FAILURE.has(raw)) return "failed";
+    return raw ? "pending" : null;
+  } catch (err) {
+    if (err instanceof PaychanguError && err.status >= 400 && err.status < 500) return null;
+    throw err;
+  }
+}
+
+/** Banks PayChangu can pay out to (for bank payouts). Tolerates uuid/id and name/bank_name field names. */
+export async function listSupportedBanks(): Promise<{ uuid: string; name: string }[]> {
+  const r = await call<unknown>("/direct-charge/payouts/supported-banks?currency=MWK");
+  const rows = Array.isArray(r) ? r : Array.isArray((r as { data?: unknown })?.data) ? (r as { data: unknown[] }).data : [];
+  return rows
+    .map((b) => {
+      const row = b as Record<string, unknown>;
+      return { uuid: String(row.uuid ?? row.id ?? ""), name: String(row.name ?? row.bank_name ?? "") };
+    })
+    .filter((b) => b.uuid && b.name);
+}
+
 export type StartedPayment = { checkoutUrl?: string };
 
 /**
@@ -409,8 +500,14 @@ export async function settlePaychanguPayment(paymentId: number): Promise<void> {
 
   // Succeeded (now or earlier): make sure a ticket purchase has its booking.
   try {
-    await fulfilTicketPurchase(payment.id);
+    const result = await fulfilTicketPurchase(payment.id);
+    // The ticket is issued: pay the organiser their share (Lumticket keeps its commission).
+    // Imported lazily because lib/payouts.ts itself builds on this file.
+    if (result.booking) {
+      const { sendOrganiserPayout } = await import("@/lib/payouts");
+      await sendOrganiserPayout(payment.id);
+    }
   } catch (err) {
-    console.error("Ticket fulfilment error:", err);
+    console.error("Ticket fulfilment / payout error:", err);
   }
 }

@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth-kyb";
 import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { fulfilTicketPurchase, readAnyIntent } from "@/lib/purchase";
 import { settlePaychanguPayment } from "@/lib/paychangu";
+import { sendOrganiserPayout } from "@/lib/payouts";
 
 /**
  * GET /api/checkout/tickets/:paymentId — the buyer polls this after starting a payment.
@@ -34,7 +35,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ paym
     if (payment.status !== "succeeded") return NextResponse.json({ status: payment.status });
 
     const result = await fulfilTicketPurchase(payment.id);
-    if (result.booking) return NextResponse.json({ status: "succeeded", booking: result.booking });
+    if (result.booking) {
+      // No-op once the organiser has been paid; retries a payout that failed earlier.
+      await sendOrganiserPayout(payment.id);
+      return NextResponse.json({ status: "succeeded", booking: result.booking });
+    }
     return NextResponse.json({ status: "succeeded", problem: result.problem });
   } catch (err) {
     console.error("Ticket checkout status error:", err);

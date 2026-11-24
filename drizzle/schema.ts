@@ -115,6 +115,13 @@ export const businessProfiles = pgTable("business_profiles", {
   category: varchar("category", { length: 100 }),
   isVerified: boolean("is_verified").default(false).notNull(),
   commissionRate: numeric("commission_rate", { precision: 5, scale: 2 }),
+  /** Where ticket sales are paid out right after each purchase (set by the organiser). */
+  payoutMethod: varchar("payout_method", { length: 10 }).$type<"tnm" | "airtel" | "bank">(),
+  payoutAccountName: varchar("payout_account_name", { length: 255 }),
+  /** Mobile money number (tnm/airtel) or bank account number (bank). */
+  payoutAccountNumber: varchar("payout_account_number", { length: 50 }),
+  /** PayChangu bank uuid (GET /direct-charge/banks), bank payouts only. */
+  payoutBankUuid: varchar("payout_bank_uuid", { length: 100 }),
   accountStatus: varchar("account_status", { length: 20 })
     .notNull()
     .default("active")
@@ -220,6 +227,37 @@ export const payments = pgTable("payments", {
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
 });
 
+/** One row per ticket purchase: what Lumticket kept and what the organiser was sent. */
+export const payouts = pgTable("payouts", {
+  id: serial("id").primaryKey(),
+  paymentId: integer("payment_id")
+    .notNull()
+    .unique()
+    .references(() => payments.id, { onDelete: "restrict" }),
+  businessProfileId: integer("business_profile_id")
+    .notNull()
+    .references(() => businessProfiles.id, { onDelete: "cascade" }),
+  eventId: integer("event_id"),
+  tier: varchar("tier", { length: 10 }).notNull().$type<"small" | "standard" | "premium">(),
+  grossAmount: integer("gross_amount").notNull(),
+  commissionRate: numeric("commission_rate", { precision: 5, scale: 2 }).notNull(),
+  commissionAmount: integer("commission_amount").notNull(),
+  netAmount: integer("net_amount").notNull(),
+  currency: varchar("currency", { length: 3 }).notNull().default("MWK"),
+  /** needs-details: organiser has no payout account yet; sending: in flight; sent: accepted by PayChangu. */
+  status: varchar("status", { length: 20 })
+    .notNull()
+    .default("pending")
+    .$type<"pending" | "needs-details" | "sending" | "sent" | "paid" | "failed">(),
+  /** Unique id sent to PayChangu, so a retry can never pay the organiser twice. */
+  chargeId: varchar("charge_id", { length: 100 }).notNull().unique(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  sentAt: timestamp("sent_at", { mode: "date" }),
+  createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+});
+
 export const events = pgTable("events", {
   id: serial("id").primaryKey(),
   businessProfileId: integer("business_profile_id")
@@ -249,6 +287,8 @@ export const events = pgTable("events", {
   image: text("image"),
   tags: jsonb("tags").$type<string[]>().default([]),
   maxPerUser: integer("max_per_user").notNull().default(5),
+  /** Decides Lumticket's commission: small 5%, standard 7%, premium 8%. Set by the server at publish. */
+  tier: varchar("tier", { length: 10 }).notNull().default("standard").$type<"small" | "standard" | "premium">(),
   status: varchar("status", { length: 20 }).notNull().default("published").$type<"draft" | "published" | "cancelled">(),
   createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
@@ -435,6 +475,7 @@ export type TeamInvitation = typeof teamInvitations.$inferSelect;
 export type NewTeamInvitation = typeof teamInvitations.$inferInsert;
 export type TeamMember = typeof teamMembers.$inferSelect;
 export type NewTeamMember = typeof teamMembers.$inferInsert;
+export type Payout = typeof payouts.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type NewPayment = typeof payments.$inferInsert;
 export type Event = typeof events.$inferSelect;

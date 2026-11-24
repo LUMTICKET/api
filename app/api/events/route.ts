@@ -4,7 +4,9 @@ import { db } from "@/lib/db";
 import { businessProfiles, events, payments, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
-import { publishingFeeMwk } from "@/lib/fees";
+import { eventTierFor, publishingFeeMwk } from "@/lib/fees";
+import { hasPayoutAccount } from "@/lib/payouts";
+import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { readAnyIntent } from "@/lib/purchase";
 import { publicPosterUrl, validatePoster } from "@/lib/poster";
 
@@ -20,6 +22,7 @@ const categories = ["event", "bus", "flight", "tourism"] as const;
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureOperationalSchema();
     const user = await getCurrentUser(req);
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -43,11 +46,18 @@ export async function POST(req: NextRequest) {
     }
 
     const [profile] = await db
-      .select({ id: businessProfiles.id })
+      .select()
       .from(businessProfiles)
       .where(and(eq(businessProfiles.id, businessProfileId), eq(businessProfiles.userId, user.id)))
       .limit(1);
     if (!profile) return NextResponse.json({ error: "Business profile not found or not owned by user" }, { status: 404 });
+    // Ticket money is paid straight to the organiser after every sale, so we need to know where to send it.
+    if ((body.category ?? "event") !== "bus" && !hasPayoutAccount(profile)) {
+      return NextResponse.json(
+        { error: "Add your payout account (PUT /api/business/payout-details) before publishing, so ticket money can be sent to you." },
+        { status: 400 },
+      );
+    }
 
     const [payment] = await db
       .select()
@@ -83,6 +93,12 @@ export async function POST(req: NextRequest) {
       };
     });
 
+    // Commission tier (small 5% / standard 7% / premium 8%) is decided here, on the server.
+    const tier = eventTierFor({
+      totalCapacity: normalizedTickets.reduce((n, t) => n + t.capacity, 0),
+      maxTicketPrice: Math.max(...normalizedTickets.map((t) => t.price)),
+    });
+
     const event = await db.transaction(async (transaction) => {
       const [createdEvent] = await transaction
         .insert(events)
@@ -104,6 +120,7 @@ export async function POST(req: NextRequest) {
           image: poster.value,
           tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
           maxPerUser: Number.isInteger(Number(body.maxPerUser)) ? Number(body.maxPerUser) : 5,
+          tier,
           status: body.status === "draft" ? "draft" : "published",
         })
         .returning();
@@ -122,7 +139,7 @@ export async function POST(req: NextRequest) {
       action: "created",
       resourceType: "event",
       resourceId: event.id,
-      details: { paymentId, ticketTypeCount: event.tickets.length, status: event.status },
+      details: { paymentId, ticketTypeCount: event.tickets.length, status: event.status, tier },
     });
 
     return NextResponse.json({ ...event, image: publicPosterUrl(event.id, event.image, event.updatedAt) }, { status: 201 });
