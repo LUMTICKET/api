@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { businessProfiles, events, teamMembers, ticketTypes } from "@/drizzle/schema";
+import { bookings, businessProfiles, events, payouts, teamMembers, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { createAuditLog } from "@/lib/audit";
 import { publicPosterUrl, validatePoster } from "@/lib/poster";
 
 const categories = ["event", "bus", "flight", "tourism"] as const;
-interface TicketInput { name?: string; price?: number; currency?: string; perks?: string[]; capacity?: number; remaining?: number; }
+interface TicketInput { id?: number; name?: string; price?: number; currency?: string; perks?: string[]; capacity?: number; remaining?: number; }
 interface Params { params: Promise<{ id: string }> }
 
 async function getEventAdmin(eventId: number, userId: number) {
@@ -39,7 +39,12 @@ export async function PUT(req: NextRequest, { params }: Params) {
     if (!access) return NextResponse.json({ error: "Event not found or admin access required" }, { status: 404 });
 
     const body = await req.json();
-    const category = body.category ?? access.event.category;
+    const permittedFreeKeys = new Set(["startsAt", "date", "endsAt", "image"]);
+    const attemptedContentEdit = Object.keys(body).some((key) => !permittedFreeKeys.has(key));
+    if (attemptedContentEdit) {
+      return NextResponse.json({ error: "Changing event or ticket information requires a new publishing-fee payment. Use POST /api/events/{id}/republish. Date extensions alone are free." }, { status: 402 });
+    }
+    const category = access.event.category;
     if (!categories.includes(category)) return NextResponse.json({ error: "category must be event, bus, flight, or tourism" }, { status: 400 });
 
     // image: omitted = keep, null/"" = remove, data URL = replace.
@@ -53,51 +58,27 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
     const startsAt = body.startsAt || body.date ? new Date(body.startsAt ?? body.date) : access.event.startsAt;
     if (Number.isNaN(startsAt.getTime())) return NextResponse.json({ error: "Invalid startsAt" }, { status: 400 });
-
-    const hasTickets = Array.isArray(body.tickets) || Array.isArray(body.tiers);
-    const inputTickets: TicketInput[] = body.tickets ?? body.tiers ?? [];
-    const normalizedTickets = hasTickets ? inputTickets.map((ticket) => {
-      const capacity = Number(ticket.capacity ?? ticket.remaining);
-      const price = Number(ticket.price);
-      if (!ticket.name || !Number.isInteger(capacity) || capacity <= 0 || !Number.isInteger(price) || price < 0) {
-        throw new Error("Each ticket requires a name, non-negative integer price, and positive integer capacity");
-      }
-      return { name: String(ticket.name).trim(), price, currency: String(ticket.currency ?? "MWK").toUpperCase(), perks: Array.isArray(ticket.perks) ? ticket.perks.map(String) : [], capacity, remaining: capacity };
-    }) : [];
-    if (hasTickets && !normalizedTickets.length) return NextResponse.json({ error: "At least one ticket type is required" }, { status: 400 });
+    if (body.endsAt) {
+      const endsAt = new Date(body.endsAt);
+      if (Number.isNaN(endsAt.getTime()) || endsAt < startsAt) return NextResponse.json({ error: "Invalid event end date" }, { status: 400 });
+    }
 
     const updated = await db.transaction(async (transaction) => {
       const [event] = await transaction.update(events).set({
-        title: body.title ?? access.event.title,
-        subtitle: body.subtitle ?? access.event.subtitle,
-        category,
-        organizer: body.organizer ?? access.event.organizer,
-        description: body.description ?? access.event.description,
-        location: body.location ?? access.event.location,
-        venue: body.venue !== undefined ? body.venue : access.event.venue,
-        city: body.city !== undefined ? body.city : access.event.city,
-        countryCode: body.countryCode !== undefined ? body.countryCode : access.event.countryCode,
+
         startsAt,
         endsAt: body.endsAt === null ? null : body.endsAt ? new Date(body.endsAt) : access.event.endsAt,
         image,
-        tags: Array.isArray(body.tags) ? body.tags.map(String) : access.event.tags,
-        maxPerUser: body.maxPerUser === undefined ? access.event.maxPerUser : Number(body.maxPerUser),
-        status: body.status ?? access.event.status,
         updatedAt: new Date(),
       }).where(eq(events.id, eventId)).returning();
 
-      let tickets = await transaction.select().from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
-      if (hasTickets) {
-        await transaction.delete(ticketTypes).where(eq(ticketTypes.eventId, eventId));
-        tickets = await transaction.insert(ticketTypes).values(normalizedTickets.map((ticket) => ({ ...ticket, eventId }))).returning();
-      }
+      const tickets = await transaction.select().from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
       return { ...event, tickets };
     });
 
-    await createAuditLog({ actorUserId: user.id, businessProfileId: access.event.businessProfileId, action: "updated", resourceType: "event", resourceId: eventId, details: { category: updated.category, ticketTypesUpdated: hasTickets } });
+    await createAuditLog({ actorUserId: user.id, businessProfileId: access.event.businessProfileId, action: "updated", resourceType: "event", resourceId: eventId, details: { dateExtended: true } });
     return NextResponse.json({ ...updated, image: publicPosterUrl(updated.id, updated.image, updated.updatedAt) });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Each ticket")) return NextResponse.json({ error: error.message }, { status: 400 });
     console.error("Update event error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
@@ -114,6 +95,39 @@ export async function GET(req: NextRequest, { params }: Params) {
     return NextResponse.json({ ...access.event, image: publicPosterUrl(access.event.id, access.event.image, access.event.updatedAt), tickets });
   } catch (error) {
     console.error("Get event error:", error);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
+}
+
+
+/** DELETE /api/events/:id. Events with paid tickets are safely cancelled instead of erasing financial history. */
+export async function DELETE(req: NextRequest, { params }: Params) {
+  try {
+    const user = await getCurrentUser(req);
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const eventId = Number((await params).id);
+    if (!Number.isInteger(eventId)) return NextResponse.json({ error: "Invalid event ID" }, { status: 400 });
+    const access = await getEventAdmin(eventId, user.id);
+    if (!access) return NextResponse.json({ error: "Event not found or admin access required" }, { status: 404 });
+
+    const ticketRows = await db.select({ id: ticketTypes.id }).from(ticketTypes).where(eq(ticketTypes.eventId, eventId));
+    const ticketIds = ticketRows.map((row) => row.id);
+    const paidBookings = ticketIds.length
+      ? await db.select({ id: bookings.id }).from(bookings).where(inArray(bookings.ticketTypeId, ticketIds)).limit(1)
+      : [];
+    const payoutRows = await db.select({ id: payouts.id }).from(payouts).where(eq(payouts.eventId, eventId)).limit(1);
+
+    if (paidBookings.length || payoutRows.length) {
+      const [cancelled] = await db.update(events).set({ status: "cancelled", updatedAt: new Date() }).where(eq(events.id, eventId)).returning();
+      await createAuditLog({ actorUserId: user.id, businessProfileId: access.event.businessProfileId, action: "updated", resourceType: "event", resourceId: eventId, details: { status: "cancelled", reason: "Protected paid-ticket financial history" } });
+      return NextResponse.json({ success: true, deleted: false, cancelled: true, event: cancelled, message: "This event has paid ticket history, so it was cancelled rather than permanently deleted." });
+    }
+
+    await db.delete(events).where(eq(events.id, eventId));
+    await createAuditLog({ actorUserId: user.id, businessProfileId: access.event.businessProfileId, action: "deleted", resourceType: "event", resourceId: eventId, details: { title: access.event.title } });
+    return NextResponse.json({ success: true, deleted: true });
+  } catch (error) {
+    console.error("Delete event error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
