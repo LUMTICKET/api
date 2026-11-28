@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { businessProfiles, events, payments } from "@/drizzle/schema";
+import { events, payments } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { publishingFeeMwk } from "@/lib/fees";
+import { getManagedProfile } from "@/lib/ownership";
 import {
   normalizeMsisdn,
   PAYMENT_PROVIDER,
@@ -48,12 +49,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Enter a valid Malawian mobile money number, e.g. 0999 123 456" }, { status: 400 });
     }
 
-    const [profile] = await db
-      .select({ id: businessProfiles.id })
-      .from(businessProfiles)
-      .where(and(eq(businessProfiles.id, businessProfileId), eq(businessProfiles.userId, user.id)))
-      .limit(1);
-    if (!profile) return NextResponse.json({ error: "Business profile not found or not owned by user" }, { status: 404 });
+    const profile = await getManagedProfile(businessProfileId, user.id);
+    if (!profile) return NextResponse.json({ error: "You need to be the owner or an admin of this business to pay the publishing fee." }, { status: 403 });
 
     const reference = `LT${crypto.randomBytes(8).toString("hex").toUpperCase()}`; // 18 chars, unique per payment
     const narrative = String(body?.description ?? "Event publishing fee").slice(0, 100);
@@ -119,12 +116,8 @@ export async function GET(req: NextRequest) {
     const businessProfileId = Number(params.get("businessProfileId"));
     if (!businessProfileId) return NextResponse.json({ error: "businessProfileId is required" }, { status: 400 });
 
-    const [profile] = await db
-      .select({ id: businessProfiles.id })
-      .from(businessProfiles)
-      .where(and(eq(businessProfiles.id, businessProfileId), eq(businessProfiles.userId, user.id)))
-      .limit(1);
-    if (!profile) return NextResponse.json({ error: "Business profile not found or not owned by user" }, { status: 404 });
+    const profile = await getManagedProfile(businessProfileId, user.id);
+    if (!profile) return NextResponse.json({ error: "You need to be the owner or an admin of this business to view its payments." }, { status: 403 });
 
     const paymentId = Number(params.get("paymentId"));
     if (paymentId) {

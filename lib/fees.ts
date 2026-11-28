@@ -6,9 +6,10 @@ export function publishingFeeMwk(): number {
 
 // ---- Platform commission on ticket sales -------------------------------------------------------
 //
-// Every ticket purchase is collected in full into Lumticket's PayChangu account. Lumticket keeps a
-// commission that depends on the event's tier, and the rest is paid out to the organiser straight
-// away (see lib/payouts.ts).
+// Every ticket purchase is collected in full into Lumticket's PayChangu account. The commission below is
+// paid BY the organiser TO Lumticket (the platform / system owners): Lumticket keeps it, and only the
+// remainder is paid out to the organiser straight away (see lib/payouts.ts). It is platform income,
+// never organiser income.
 //
 //   small    5%
 //   standard 7%

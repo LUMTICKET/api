@@ -7,7 +7,7 @@ import { ensureOperationalSchema } from "@/lib/ensure-schema";
 import { getProfileByUserId } from "@/lib/ownership";
 import { refreshPayoutStatus } from "@/lib/payouts";
 
-/** GET /api/finance/payouts — the organiser's own ticket payouts: gross, Lumticket's commission, and what they were sent. */
+/** GET /api/finance/payouts — the organiser's own ticket payouts: gross, the commission paid to Lumticket (the platform owners), and what they were sent. */
 export async function GET(req: NextRequest) {
   try {
     await ensureOperationalSchema();
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 
     let rows = await db.select().from(payouts).where(eq(payouts.businessProfileId, profile.id)).orderBy(desc(payouts.createdAt)).limit(200);
     rows = await Promise.all(rows.map((r) => (r.status === "sent" ? refreshPayoutStatus(r) : r)));
-    return NextResponse.json({ payouts: rows.map(({ lastError: _e, ...r }) => r) });
+    return NextResponse.json({ payouts: rows.map(({ lastError: _e, ...r }) => ({ ...r, commissionPaidToPlatform: r.commissionAmount })) });
   } catch (err) {
     console.error("List payouts error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

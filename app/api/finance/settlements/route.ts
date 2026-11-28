@@ -43,13 +43,16 @@ export async function GET(req: NextRequest) {
       .from(payouts)
       .where(eq(payouts.businessProfileId, profile.id))
       .orderBy(desc(payouts.createdAt));
+    // commissionPaidToPlatform is what the organiser has paid Lumticket (the system owners) out of ticket sales.
+    // It is NOT income for the organiser. commissionEarned is kept as an alias so older clients keep working.
     const live = livePayouts.reduce((acc, row) => {
       acc.grossSales += row.grossAmount;
+      acc.commissionPaidToPlatform += row.commissionAmount;
       acc.commissionEarned += row.commissionAmount;
       acc.netPayouts += row.netAmount;
       if (!["sent", "paid"].includes(row.status)) acc.pendingPayouts += 1;
       return acc;
-    }, { grossSales: 0, commissionEarned: 0, publishingFeesPaid: 0, netPayouts: 0, pendingPayouts: 0 });
+    }, { grossSales: 0, commissionPaidToPlatform: 0, commissionEarned: 0, publishingFeesPaid: 0, netPayouts: 0, pendingPayouts: 0 });
     const [successfulPayments, publishedEvents] = await Promise.all([
       db.select().from(payments).where(and(eq(payments.businessProfileId, profile.id), eq(payments.status, "succeeded"))),
       db.select({ paymentId: events.paymentId }).from(events).where(eq(events.businessProfileId, profile.id)),
@@ -66,7 +69,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       settlements: rows,
       live,
-      payouts: livePayouts.slice(0, 200).map(({ lastError: _lastError, ...row }) => row),
+      payouts: livePayouts.slice(0, 200).map(({ lastError: _lastError, ...row }) => ({ ...row, commissionPaidToPlatform: row.commissionAmount })),
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

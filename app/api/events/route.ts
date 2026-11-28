@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { businessProfiles, events, payments, ticketTypes } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `The publishing fee is MWK ${publishingFeeMwk()}` }, { status: 402 });
     }
     const [alreadyUsed] = await db.select({ id: events.id }).from(events).where(eq(events.paymentId, paymentId)).limit(1);
-    if (alreadyUsed) return NextResponse.json({ error: "This payment has already been used to publish a listing" }, { status: 409 });
+    if (alreadyUsed || paymentMeta.usedForEventId) return NextResponse.json({ error: "This payment has already been used to publish a listing" }, { status: 409 });
 
     const normalizedTickets = tickets.map((ticket) => {
       const capacity = Number(ticket.capacity);
@@ -107,6 +107,13 @@ export async function POST(req: NextRequest) {
     });
 
     const event = await db.transaction(async (transaction) => {
+      const claimed = await transaction.execute(sql`
+        UPDATE payments
+           SET metadata = COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ usedAt: new Date().toISOString(), usedFor: "publish" })}::jsonb,
+               updated_at = now()
+         WHERE id = ${paymentId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'usedForEventId') AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'usedFor')
+        RETURNING id`);
+      if (!claimed.length) throw new Error("Payment already used");
       const [createdEvent] = await transaction
         .insert(events)
         .values({
@@ -132,6 +139,9 @@ export async function POST(req: NextRequest) {
         })
         .returning();
 
+      await transaction.execute(sql`
+        UPDATE payments SET metadata = COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ usedForEventId: createdEvent.id })}::jsonb WHERE id = ${paymentId}`);
+
       const createdTickets = await transaction
         .insert(ticketTypes)
         .values(normalizedTickets.map((ticket) => ({ ...ticket, eventId: createdEvent.id })))
@@ -151,6 +161,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ...event, image: publicPosterUrl(event.id, event.image, event.updatedAt) }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message === "Payment already used") {
+      return NextResponse.json({ error: "This payment has already been used to publish a listing" }, { status: 409 });
+    }
     if (error instanceof Error && error.message.startsWith("Each ticket")) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
