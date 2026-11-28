@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
         currency: "MWK",
         status: "pending",
         reference,
-        metadata: { intent },
+        metadata: { paymentType: "ticket-purchase", intent },
       })
       .returning();
 
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
         description: narrative,
         email: user.email,
         name: user.name,
-        baseMetadata: { intent },
+        baseMetadata: { paymentType: "ticket-purchase", intent },
         audience: "buyer",
       });
       return NextResponse.json(

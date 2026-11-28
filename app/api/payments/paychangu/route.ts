@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { businessProfiles, payments } from "@/drizzle/schema";
+import { businessProfiles, events, payments } from "@/drizzle/schema";
 import { getCurrentUser } from "@/lib/auth-kyb";
 import { publishingFeeMwk } from "@/lib/fees";
 import {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
         currency: "MWK",
         status: "pending",
         reference,
-        metadata: {},
+        metadata: { paymentType: "publishing-fee" },
       })
       .returning();
 
@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
         amount,
         title: "Event publishing fee",
         audience: "business",
+        baseMetadata: { paymentType: "publishing-fee" },
         description: narrative,
         email: user.email,
         name: user.name,
@@ -139,7 +140,30 @@ export async function GET(req: NextRequest) {
       }
       return one ? NextResponse.json(one) : NextResponse.json({ error: "Payment not found" }, { status: 404 });
     }
-    return NextResponse.json(await db.select().from(payments).where(eq(payments.businessProfileId, businessProfileId)));
+    const [paymentRows, publishedEvents] = await Promise.all([
+      db.select().from(payments).where(eq(payments.businessProfileId, businessProfileId)),
+      db.select({ paymentId: events.paymentId }).from(events).where(eq(events.businessProfileId, businessProfileId)),
+    ]);
+    // Classify payments at the API boundary. Ticket purchases carry a purchase intent;
+    // publishing fees are explicitly tagged, while older fee payments are identified
+    // by the event they paid to publish. This keeps legacy records out of ticket sales.
+    const publishingPaymentIds = new Set(
+      publishedEvents.map((event) => event.paymentId).filter((id): id is number => id !== null),
+    );
+    return NextResponse.json(paymentRows.map((payment) => {
+      const metadata = (payment.metadata ?? {}) as Record<string, unknown>;
+      const intent = metadata.intent && typeof metadata.intent === "object"
+        ? metadata.intent as Record<string, unknown>
+        : null;
+      const paymentType =
+        intent?.kind === "ticket-purchase" || metadata.paymentType === "ticket-purchase"
+          ? "ticket-purchase"
+          : metadata.paymentType === "publishing-fee" || publishingPaymentIds.has(payment.id) ||
+              (!intent && payment.amount >= publishingFeeMwk())
+            ? "publishing-fee"
+            : "other";
+      return { ...payment, paymentType };
+    }));
   } catch (error) {
     console.error("List payments error:", error);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

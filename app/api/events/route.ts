@@ -68,8 +68,15 @@ export async function POST(req: NextRequest) {
     if (payment.status !== "succeeded") return NextResponse.json({ error: "A successful payment is required" }, { status: 402 });
     // The payment must be a publishing fee: right amount, not a customer ticket purchase, not reversed, not already used.
     const paymentMeta = (payment.metadata ?? {}) as Record<string, unknown>;
-    if (readAnyIntent(paymentMeta) || paymentMeta.reversed) {
+    if (
+      readAnyIntent(paymentMeta) ||
+      paymentMeta.paymentType === "ticket-purchase" ||
+      paymentMeta.reversed
+    ) {
       return NextResponse.json({ error: "This payment cannot be used to publish a listing" }, { status: 400 });
+    }
+    if (paymentMeta.paymentType && paymentMeta.paymentType !== "publishing-fee") {
+      return NextResponse.json({ error: "A publishing-fee payment is required" }, { status: 400 });
     }
     if (payment.currency !== "MWK" || payment.amount < publishingFeeMwk()) {
       return NextResponse.json({ error: `The publishing fee is MWK ${publishingFeeMwk()}` }, { status: 402 });
